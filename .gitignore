@@ -1,0 +1,12 @@
+# локальная база (в облаке используется Postgres)
+cash.db
+cash.db-wal
+cash.db-shm
+
+# python
+__pycache__/
+*.pyc
+
+# системное / инструменты
+.DS_Store
+.claude/

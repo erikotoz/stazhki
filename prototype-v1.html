@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Кто кому должен</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --card:#ffffff; --ink:#1f2937; --muted:#6b7280;
+    --line:#e5e7eb; --accent:#4f46e5; --accent-ink:#fff;
+    --green:#16a34a; --green-bg:#dcfce7; --red:#dc2626; --red-bg:#fee2e2;
+    --radius:14px; --shadow:0 1px 3px rgba(16,24,40,.06),0 1px 2px rgba(16,24,40,.04);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  header{padding:22px 18px 8px; max-width:1100px; margin:0 auto}
+  header h1{margin:0 0 4px; font-size:22px}
+  header p{margin:0; color:var(--muted)}
+  main{max-width:1100px; margin:0 auto; padding:14px 18px 60px;
+       display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media (max-width:860px){ main{grid-template-columns:1fr} }
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+        box-shadow:var(--shadow); padding:16px; margin-bottom:16px}
+  .card h2{margin:0 0 12px; font-size:16px}
+  .col-span{grid-column:1 / -1}
+  label.field{display:block; margin:8px 0 4px; font-size:13px; color:var(--muted)}
+  input[type=text],input[type=number],input[type=date],select{
+    width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:10px;
+    font:inherit; background:#fff; color:inherit}
+  input:focus,select:focus{outline:2px solid #c7d2fe; border-color:var(--accent)}
+  .row{display:flex; gap:8px; align-items:center}
+  .row > *{flex:1}
+  button{font:inherit; cursor:pointer; border:1px solid var(--line); background:#fff;
+         padding:9px 12px; border-radius:10px; color:var(--ink)}
+  button:hover{background:#f3f4f6}
+  button.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+  button.primary:hover{filter:brightness(.95)}
+  button.tiny{padding:4px 8px; font-size:12px}
+  button.ghost{background:transparent; border-color:transparent; color:var(--muted)}
+  .pill{display:inline-flex; align-items:center; gap:6px; background:#eef2ff; color:#3730a3;
+        border-radius:999px; padding:4px 10px; font-size:13px; margin:3px 4px 3px 0}
+  .pill button{border:none; background:none; padding:0; color:#6366f1; font-size:14px; line-height:1}
+  .seg{display:inline-flex; border:1px solid var(--line); border-radius:10px; overflow:hidden}
+  .seg label{padding:7px 12px; cursor:pointer; font-size:13px; background:#fff}
+  .seg input{display:none}
+  .seg input:checked + span{background:var(--accent); color:#fff}
+  .seg span{display:block; margin:-7px -12px; padding:7px 12px}
+  .part{display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid #f1f5f9}
+  .part:last-child{border-bottom:none}
+  .part .name{flex:1}
+  .part input[type=number]{max-width:120px}
+  .part .preview{min-width:90px; text-align:right; color:var(--muted); font-size:13px}
+  .hint{font-size:13px; color:var(--muted); margin-top:6px}
+  .hint.bad{color:var(--red)}
+  .item{display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-bottom:1px solid #f1f5f9}
+  .item:last-child{border-bottom:none}
+  .item .meta{flex:1}
+  .item .who{font-weight:600}
+  .item .sub{color:var(--muted); font-size:13px}
+  .amount{font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap}
+  .bal{display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid #f1f5f9}
+  .bal:last-child{border-bottom:none}
+  .tag{font-size:12px; padding:2px 8px; border-radius:999px}
+  .tag.pos{background:var(--green-bg); color:var(--green)}
+  .tag.neg{background:var(--red-bg); color:var(--red)}
+  .tag.zero{background:#f1f5f9; color:var(--muted)}
+  .settle{display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid #f1f5f9}
+  .settle:last-child{border-bottom:none}
+  .settle .arrow{color:var(--muted)}
+  .empty{color:var(--muted); font-style:italic; padding:8px 0}
+  #graphBox{width:100%; overflow-x:auto}
+  svg{display:block; width:100%; height:auto; max-width:720px; margin:0 auto}
+  .toolbar{display:flex; gap:8px; flex-wrap:wrap; margin-top:6px}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>💸 Кто кому должен</h1>
+  <p>Заносите траты — приложение само считает балансы и минимальный список переводов. Всё хранится только в вашем браузере.</p>
+</header>
+
+<main>
+  <!-- ЛЕВАЯ КОЛОНКА -->
+  <div>
+    <section class="card">
+      <h2>Участники</h2>
+      <div class="row">
+        <input type="text" id="newPersonName" placeholder="Имя, например «Егор»" autocomplete="off">
+        <button class="primary" id="addPersonBtn" style="flex:0 0 auto">Добавить</button>
+      </div>
+      <div id="peopleList" style="margin-top:10px"></div>
+    </section>
+
+    <section class="card">
+      <h2>Новая трата</h2>
+      <label class="field">Кто платил</label>
+      <select id="payerSelect"></select>
+
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label class="field">Сумма, ₽</label>
+          <input type="number" id="amountInput" min="0" step="0.01" placeholder="1500">
+        </div>
+        <div>
+          <label class="field">Дата</label>
+          <input type="date" id="dateInput">
+        </div>
+      </div>
+
+      <label class="field">За что</label>
+      <input type="text" id="descInput" placeholder="Продукты / такси / бар…" autocomplete="off">
+
+      <label class="field">Как делим</label>
+      <div class="seg" id="modeSeg">
+        <label><input type="radio" name="splitMode" value="equal" checked><span>Поровну</span></label>
+        <label><input type="radio" name="splitMode" value="shares"><span>Доли</span></label>
+        <label><input type="radio" name="splitMode" value="amounts"><span>Точные суммы</span></label>
+      </div>
+
+      <label class="field">Кто участвовал</label>
+      <div id="participantsBox"></div>
+      <div class="hint" id="remainingHint"></div>
+
+      <div class="toolbar">
+        <button class="primary" id="addExpenseBtn">Добавить трату</button>
+        <button class="ghost" id="cancelEditBtn" style="display:none">Отмена</button>
+      </div>
+      <input type="hidden" id="editingId" value="">
+    </section>
+  </div>
+
+  <!-- ПРАВАЯ КОЛОНКА -->
+  <div>
+    <section class="card">
+      <h2>Итог: кто кому скидывает</h2>
+      <div class="seg" id="settleSeg" style="margin-bottom:10px">
+        <label><input type="radio" name="settleMode" value="pairs" checked><span>По парам</span></label>
+        <label><input type="radio" name="settleMode" value="min"><span>Минимум переводов</span></label>
+      </div>
+      <div id="settlementsList"></div>
+      <p class="hint" id="settleExplain"></p>
+    </section>
+
+    <section class="card">
+      <h2>Граф</h2>
+      <div id="graphBox"></div>
+      <p class="hint">Размер кружка = сколько человек всего оплатил. Зелёный — ему должны, красный — должен он. Стрелка идёт от должника к получателю.</p>
+    </section>
+
+    <section class="card">
+      <h2>Балансы</h2>
+      <div id="balancesList"></div>
+    </section>
+  </div>
+
+  <!-- НИЗ: список трат + сервис -->
+  <section class="card col-span">
+    <h2>Все траты</h2>
+    <div id="expensesList"></div>
+    <div class="toolbar" style="margin-top:12px">
+      <button class="tiny" id="exportBtn">⬇️ Экспорт (файл)</button>
+      <button class="tiny" id="importBtn">⬆️ Импорт (файл)</button>
+      <input type="file" id="importFile" accept="application/json" style="display:none">
+      <button class="tiny ghost" id="clearBtn">🗑 Очистить всё</button>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+/* =========================================================================
+   ДАННЫЕ
+   state.people   — [{id, name}]
+   state.expenses — [{id, payerId, amount, description, date,
+                      participants:[id...], split:{mode, values:{id:number}}}]
+   Все деньги внутри считаем в КОПЕЙКАХ (целых числах), чтобы не было ошибок
+   округления чисел с плавающей точкой. Показываем — в рублях.
+   ========================================================================= */
+const STORE_KEY = "kto-komu-dolzhen-v1";
+let state = load();
+
+function load(){
+  try{
+    const raw = localStorage.getItem(STORE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){}
+  return demo();           // первый запуск — показываем пример из твоего сообщения
+}
+function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
+
+function demo(){
+  const a={id:uid(),name:"Егор"}, b={id:uid(),name:"Эрик"}, c={id:uid(),name:"Максим"};
+  return {
+    people:[a,b,c],
+    expenses:[
+      {id:uid(), payerId:a.id, amount:1500, description:"Продукты", date:today(),
+       participants:[a.id,b.id,c.id], split:{mode:"equal", values:{}}},
+      {id:uid(), payerId:b.id, amount:600, description:"Такси за Егора", date:today(),
+       participants:[a.id], split:{mode:"equal", values:{}}},
+    ]
+  };
+}
+
+/* ---- мелкие помощники ---- */
+function uid(){ return (crypto.randomUUID ? crypto.randomUUID() : "id"+Math.random().toString(36).slice(2)); }
+function today(){ return new Date().toISOString().slice(0,10); }
+function toCents(x){ const n=parseFloat(x); return isFinite(n)? Math.round(n*100):0; }
+const rub = new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',minimumFractionDigits:0,maximumFractionDigits:2});
+function fmt(cents){ return rub.format(cents/100); }
+function fmtSigned(cents){ return (cents>0?'+':'') + fmt(cents); }
+function personName(id){ const p=state.people.find(p=>p.id===id); return p?p.name:'?'; }
+function el(id){ return document.getElementById(id); }
+
+/* =========================================================================
+   МАТЕМАТИКА ДЕЛЕНИЯ
+   ========================================================================= */
+function splitEqual(totalCents, ids){
+  const n=ids.length, base=Math.floor(totalCents/n);
+  let rem=totalCents-base*n; const out={};
+  ids.forEach((id,i)=> out[id]=base+(i<rem?1:0));   // лишние копейки — первым участникам
+  return out;
+}
+function splitShares(totalCents, ids, weights){
+  const W=ids.reduce((s,id)=>s+(parseFloat(weights[id])||0),0);
+  if(W<=0) return splitEqual(totalCents, ids);
+  const out={}; let acc=0;
+  ids.forEach((id,i)=>{
+    if(i<ids.length-1){ const c=Math.round(totalCents*(parseFloat(weights[id])||0)/W); out[id]=c; acc+=c; }
+  });
+  out[ids[ids.length-1]] = totalCents-acc;          // остаток — последнему, чтобы сумма сошлась
+  return out;
+}
+function splitAmounts(totalCents, ids, amounts){
+  const out={}; ids.forEach(id=> out[id]=toCents(amounts[id]||0)); return out;
+}
+function sharesOf(exp){
+  const ids=exp.participants, total=toCents(exp.amount), v=exp.split.values||{};
+  if(exp.split.mode==="shares")  return splitShares(total, ids, v);
+  if(exp.split.mode==="amounts") return splitAmounts(total, ids, v);
+  return splitEqual(total, ids);
+}
+
+/* Баланс каждого = (сколько заплатил) − (его доля). Сумма всех балансов = 0. */
+function balances(){
+  const bal={}; state.people.forEach(p=> bal[p.id]=0);
+  state.expenses.forEach(exp=>{
+    if(bal[exp.payerId]===undefined) return;
+    const sh=sharesOf(exp), total=toCents(exp.amount);
+    bal[exp.payerId]+=total;
+    exp.participants.forEach(id=>{ if(bal[id]!==undefined) bal[id]-= (sh[id]||0); });
+  });
+  return bal;
+}
+function totalPaidBy(){
+  const t={}; state.people.forEach(p=> t[p.id]=0);
+  state.expenses.forEach(e=>{ if(t[e.payerId]!==undefined) t[e.payerId]+=toCents(e.amount); });
+  return t;
+}
+
+/* Вариант 1: «по парам» — кто с кем реально пересекался, взаимные долги гасятся. */
+function settlePairs(){
+  const debt={};                                     // debt[a][b] = a должен b
+  const add=(a,b,c)=>{ (debt[a]=debt[a]||{}); debt[a][b]=(debt[a][b]||0)+c; };
+  state.expenses.forEach(exp=>{
+    const sh=sharesOf(exp);
+    exp.participants.forEach(id=>{ if(id!==exp.payerId) add(id, exp.payerId, sh[id]||0); });
+  });
+  const ids=state.people.map(p=>p.id), out=[];
+  for(let i=0;i<ids.length;i++) for(let j=i+1;j<ids.length;j++){
+    const a=ids[i], b=ids[j];
+    const ab=(debt[a]&&debt[a][b])||0, ba=(debt[b]&&debt[b][a])||0, net=ab-ba;
+    if(net>0) out.push({from:a,to:b,amount:net});
+    else if(net<0) out.push({from:b,to:a,amount:-net});
+  }
+  return out.filter(s=>s.amount>0);
+}
+
+/* Вариант 2: «минимум переводов» — жадно сводим крупнейшего должника с крупнейшим получателем. */
+function settleMin(){
+  const bal=balances();
+  const cred=[], deb=[];
+  Object.keys(bal).forEach(id=>{ if(bal[id]>0) cred.push({id,amt:bal[id]}); else if(bal[id]<0) deb.push({id,amt:-bal[id]}); });
+  cred.sort((x,y)=>y.amt-x.amt); deb.sort((x,y)=>y.amt-x.amt);
+  const out=[]; let i=0,j=0;
+  while(i<cred.length && j<deb.length){
+    const x=Math.min(cred[i].amt, deb[j].amt);
+    if(x>0) out.push({from:deb[j].id, to:cred[i].id, amount:x});
+    cred[i].amt-=x; deb[j].amt-=x;
+    if(cred[i].amt<=0) i++;
+    if(deb[j].amt<=0) j++;
+  }
+  return out;
+}
+function settlements(){ return settleMode()==="min" ? settleMin() : settlePairs(); }
+function settleMode(){ const r=document.querySelector('input[name="settleMode"]:checked'); return r?r.value:"pairs"; }
+function splitMode(){ const r=document.querySelector('input[name="splitMode"]:checked'); return r?r.value:"equal"; }
+
+/* =========================================================================
+   ОТРИСОВКА
+   ========================================================================= */
+function render(){
+  renderPeople();
+  renderPayerSelect();
+  renderParticipants();           // строки выбора участников в форме
+  renderExpenses();
+  renderBalances();
+  renderSettlements();
+  renderGraph();
+  save();
+}
+
+function renderPeople(){
+  const box=el("peopleList");
+  if(!state.people.length){ box.innerHTML='<div class="empty">Пока никого нет — добавьте участников.</div>'; return; }
+  box.innerHTML = state.people.map(p=>
+    `<span class="pill">${esc(p.name)} <button data-del-person="${p.id}" title="Удалить">×</button></span>`).join("");
+}
+
+function renderPayerSelect(){
+  const sel=el("payerSelect"), cur=sel.value;
+  sel.innerHTML = state.people.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  if(state.people.some(p=>p.id===cur)) sel.value=cur;
+}
+
+function renderParticipants(){
+  const box=el("participantsBox"), mode=splitMode();
+  if(!state.people.length){ box.innerHTML='<div class="empty">Сначала добавьте участников.</div>'; updateHint(); return; }
+  // сохраняем уже отмеченные галочки/значения, чтобы не сбрасывать при смене режима
+  const prev={};
+  box.querySelectorAll('[data-pid]').forEach(node=>{
+    const id=node.getAttribute('data-pid');
+    prev[id]=prev[id]||{};
+    if(node.matches('input[type=checkbox]')) prev[id].checked=node.checked;
+    if(node.matches('input[type=number]'))   prev[id].value=node.value;
+  });
+  box.innerHTML = state.people.map(p=>{
+    const checked = (prev[p.id] ? prev[p.id].checked : true) ? "checked":"";
+    const val = prev[p.id] && prev[p.id].value!==undefined ? prev[p.id].value : (mode==="shares"?"1":"");
+    let extra="";
+    if(mode==="amounts") extra=`<input type="number" data-pid="${p.id}" min="0" step="0.01" placeholder="₽" value="${val}">`;
+    if(mode==="shares")  extra=`<input type="number" data-pid="${p.id}" min="0" step="1" placeholder="доля" value="${val}"><span class="preview" data-prev="${p.id}"></span>`;
+    return `<div class="part">
+      <input type="checkbox" data-pid="${p.id}" ${checked}>
+      <span class="name">${esc(p.name)}</span>
+      ${extra}
+    </div>`;
+  }).join("");
+  updateHint();
+}
+
+/* подсказка снизу формы: остаток для «точных сумм» и превью для «долей» */
+function updateHint(){
+  const mode=splitMode(), hint=el("remainingHint");
+  const totalCents=toCents(el("amountInput").value);
+  const checked=[...document.querySelectorAll('#participantsBox input[type=checkbox]:checked')].map(c=>c.getAttribute('data-pid'));
+  if(mode==="amounts"){
+    let sum=0;
+    checked.forEach(id=>{ const inp=document.querySelector(`#participantsBox input[type=number][data-pid="${id}"]`); sum+=toCents(inp?inp.value:0); });
+    const diff=totalCents-sum;
+    hint.textContent = diff===0 ? "✓ Суммы сходятся" : `Распределено ${fmt(sum)} из ${fmt(totalCents)} · остаток ${fmt(diff)}`;
+    hint.className = "hint" + (diff===0?"":" bad");
+  }else if(mode==="shares"){
+    const weights={}; checked.forEach(id=>{ const inp=document.querySelector(`#participantsBox input[type=number][data-pid="${id}"]`); weights[id]=inp?inp.value:0; });
+    const sh = totalCents>0 ? splitShares(totalCents, checked, weights) : {};
+    document.querySelectorAll('#participantsBox [data-prev]').forEach(s=>{
+      const id=s.getAttribute('data-prev'); s.textContent = (checked.includes(id)&&sh[id]!=null)? "= "+fmt(sh[id]) : "";
+    });
+    hint.textContent = `Делим ${fmt(totalCents)} пропорционально долям`;
+    hint.className="hint";
+  }else{
+    hint.textContent = checked.length? `Поровну между ${checked.length} — по ${fmt(checked.length?Math.floor(totalCents/checked.length):0)} (копейки распределятся ровно)` : "Отметьте участников";
+    hint.className="hint";
+  }
+}
+
+function renderExpenses(){
+  const box=el("expensesList");
+  if(!state.expenses.length){ box.innerHTML='<div class="empty">Трат пока нет.</div>'; return; }
+  const modeLabel={equal:"поровну",shares:"доли",amounts:"точные суммы"};
+  box.innerHTML = state.expenses.slice().reverse().map(e=>{
+    const parts=e.participants.map(personName).join(", ");
+    return `<div class="item">
+      <div class="meta">
+        <div class="who">${esc(e.description||"Без названия")}</div>
+        <div class="sub">Платил <b>${esc(personName(e.payerId))}</b> · ${esc(e.date||"")} · ${modeLabel[e.split.mode]||""}<br>
+        Участники: ${esc(parts)}</div>
+      </div>
+      <div class="amount">${fmt(toCents(e.amount))}</div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <button class="tiny" data-edit="${e.id}">✏️</button>
+        <button class="tiny" data-del-exp="${e.id}">🗑</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderBalances(){
+  const box=el("balancesList"), bal=balances();
+  if(!state.people.length){ box.innerHTML='<div class="empty">—</div>'; return; }
+  box.innerHTML = state.people.map(p=>{
+    const c=bal[p.id]||0;
+    const cls = c>0?"pos":(c<0?"neg":"zero");
+    const txt = c>0?"ему должны":(c<0?"должен он":"в нуле");
+    return `<div class="bal"><span>${esc(p.name)}</span>
+      <span><span class="amount">${fmtSigned(c)}</span> <span class="tag ${cls}">${txt}</span></span></div>`;
+  }).join("");
+}
+
+function renderSettlements(){
+  const box=el("settlementsList"), list=settlements();
+  if(!list.length){ box.innerHTML='<div class="empty">Все в расчёте 🎉</div>'; }
+  else{
+    box.innerHTML = list.sort((a,b)=>b.amount-a.amount).map(s=>
+      `<div class="settle"><b>${esc(personName(s.from))}</b> <span class="arrow">→</span> <b>${esc(personName(s.to))}</b>
+       <span style="flex:1"></span><span class="amount">${fmt(s.amount)}</span></div>`).join("");
+  }
+  el("settleExplain").textContent = settleMode()==="min"
+    ? "Минимум переводов: меньше всего операций, но можно платить тому, с кем напрямую не пересекался."
+    : "По парам: каждый отдаёт тому, с кем реально считался; взаимные долги уже погашены.";
+}
+
+/* --- ГРАФ: рисуем сами в SVG, без внешних библиотек --- */
+function renderGraph(){
+  const box=el("graphBox"), people=state.people;
+  if(people.length<1){ box.innerHTML='<div class="empty">—</div>'; return; }
+  const W=640,H=460,cx=W/2,cy=H/2,R=Math.min(W,H)/2-90;
+  const bal=balances(), paid=totalPaidBy();
+  const maxPaid=Math.max(1,...Object.values(paid));
+  const pos={};
+  people.forEach((p,i)=>{
+    const a=-Math.PI/2 + i*2*Math.PI/people.length;
+    pos[p.id]={x:cx+R*Math.cos(a), y:cy+R*Math.sin(a), r:18+26*Math.sqrt((paid[p.id]||0)/maxPaid)};
+  });
+  const edges=settlements().map(s=>{
+    const A=pos[s.from], B=pos[s.to]; if(!A||!B) return "";
+    const dx=B.x-A.x, dy=B.y-A.y, L=Math.hypot(dx,dy)||1, ux=dx/L, uy=dy/L;
+    const x1=A.x+ux*A.r, y1=A.y+uy*A.r, x2=B.x-ux*(B.r+12), y2=B.y-uy*(B.r+12);
+    const mx=(x1+x2)/2, my=(y1+y2)/2, label=fmt(s.amount), w=label.length*7+10;
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#94a3b8" stroke-width="2" marker-end="url(#arr)"/>
+      <rect x="${mx-w/2}" y="${my-11}" width="${w}" height="20" rx="6" fill="#fff" stroke="#e5e7eb"/>
+      <text x="${mx}" y="${my+3}" text-anchor="middle" font-size="12" fill="#334155">${label}</text>`;
+  }).join("");
+  const nodes=people.map(p=>{
+    const P=pos[p.id], c=bal[p.id]||0;
+    const fill=c>0?"#dcfce7":(c<0?"#fee2e2":"#f1f5f9");
+    const stroke=c>0?"#16a34a":(c<0?"#dc2626":"#94a3b8");
+    return `<circle cx="${P.x}" cy="${P.y}" r="${P.r}" fill="${fill}" stroke="${stroke}" stroke-width="2"/>
+      <text x="${P.x}" y="${P.y+P.r+16}" text-anchor="middle" font-size="13" font-weight="600" fill="#1f2937">${esc(p.name)}</text>
+      <text x="${P.x}" y="${P.y+P.r+31}" text-anchor="middle" font-size="11" fill="${stroke}">${fmtSigned(c)}</text>`;
+  }).join("");
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker></defs>
+    ${edges}${nodes}</svg>`;
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+
+/* =========================================================================
+   СОБЫТИЯ
+   ========================================================================= */
+el("addPersonBtn").onclick = addPerson;
+el("newPersonName").addEventListener("keydown", e=>{ if(e.key==="Enter") addPerson(); });
+function addPerson(){
+  const name=el("newPersonName").value.trim();
+  if(!name) return;
+  state.people.push({id:uid(), name});
+  el("newPersonName").value="";
+  render();
+}
+
+el("peopleList").addEventListener("click", e=>{
+  const id=e.target.getAttribute && e.target.getAttribute("data-del-person");
+  if(!id) return;
+  if(state.expenses.some(x=>x.payerId===id || x.participants.includes(id))){
+    if(!confirm("Этот участник есть в тратах. Удалить вместе с упоминаниями?")) return;
+    state.expenses=state.expenses.filter(x=>x.payerId!==id);
+    state.expenses.forEach(x=>{ x.participants=x.participants.filter(pid=>pid!==id); if(x.split.values) delete x.split.values[id]; });
+    state.expenses=state.expenses.filter(x=>x.participants.length);
+  }
+  state.people=state.people.filter(p=>p.id!==id);
+  render();
+});
+
+el("modeSeg").addEventListener("change", renderParticipants);
+el("amountInput").addEventListener("input", updateHint);
+el("participantsBox").addEventListener("input", updateHint);
+el("participantsBox").addEventListener("change", updateHint);
+
+el("addExpenseBtn").onclick = addExpense;
+el("cancelEditBtn").onclick = resetForm;
+function addExpense(){
+  if(!state.people.length){ alert("Сначала добавьте участников."); return; }
+  const payerId=el("payerSelect").value;
+  const amount=parseFloat(el("amountInput").value);
+  if(!(amount>0)){ alert("Введите сумму больше нуля."); return; }
+  const mode=splitMode();
+  const checked=[...document.querySelectorAll('#participantsBox input[type=checkbox]:checked')].map(c=>c.getAttribute('data-pid'));
+  if(!checked.length){ alert("Отметьте хотя бы одного участника."); return; }
+
+  const values={};
+  if(mode!=="equal"){
+    checked.forEach(id=>{ const inp=document.querySelector(`#participantsBox input[type=number][data-pid="${id}"]`); values[id]=inp?inp.value:0; });
+    if(mode==="amounts"){
+      const sum=checked.reduce((s,id)=>s+toCents(values[id]),0);
+      if(sum!==toCents(amount)){ alert(`Точные суммы должны давать ${fmt(toCents(amount))}. Сейчас ${fmt(sum)}.`); return; }
+    }
+    if(mode==="shares"){
+      const W=checked.reduce((s,id)=>s+(parseFloat(values[id])||0),0);
+      if(W<=0){ alert("Доли должны быть больше нуля."); return; }
+    }
+  }
+
+  const editId=el("editingId").value;
+  const exp={
+    id: editId||uid(), payerId, amount, date: el("dateInput").value||today(),
+    description: el("descInput").value.trim(), participants: checked, split:{mode, values}
+  };
+  if(editId){ const i=state.expenses.findIndex(x=>x.id===editId); if(i>=0) state.expenses[i]=exp; }
+  else state.expenses.push(exp);
+  resetForm();
+  render();
+}
+
+function resetForm(){
+  el("editingId").value="";
+  el("amountInput").value=""; el("descInput").value=""; el("dateInput").value=today();
+  document.querySelector('input[name="splitMode"][value="equal"]').checked=true;
+  el("addExpenseBtn").textContent="Добавить трату";
+  el("cancelEditBtn").style.display="none";
+  renderParticipants();
+}
+
+el("expensesList").addEventListener("click", e=>{
+  const t=e.target;
+  const del=t.getAttribute&&t.getAttribute("data-del-exp");
+  const ed =t.getAttribute&&t.getAttribute("data-edit");
+  if(del){ state.expenses=state.expenses.filter(x=>x.id!==del); render(); }
+  if(ed){ startEdit(ed); }
+});
+function startEdit(id){
+  const e=state.expenses.find(x=>x.id===id); if(!e) return;
+  el("editingId").value=e.id;
+  el("payerSelect").value=e.payerId;
+  el("amountInput").value=e.amount;
+  el("descInput").value=e.description||"";
+  el("dateInput").value=e.date||today();
+  document.querySelector(`input[name="splitMode"][value="${e.split.mode}"]`).checked=true;
+  renderParticipants();
+  // проставляем галочки/значения этой траты
+  document.querySelectorAll('#participantsBox input[type=checkbox]').forEach(c=>{
+    c.checked = e.participants.includes(c.getAttribute('data-pid'));
+  });
+  if(e.split.mode!=="equal"){
+    Object.keys(e.split.values||{}).forEach(pid=>{
+      const inp=document.querySelector(`#participantsBox input[type=number][data-pid="${pid}"]`);
+      if(inp) inp.value=e.split.values[pid];
+    });
+  }
+  el("addExpenseBtn").textContent="Сохранить изменения";
+  el("cancelEditBtn").style.display="inline-block";
+  updateHint();
+  el("descInput").scrollIntoView({behavior:"smooth", block:"center"});
+}
+
+el("settleSeg").addEventListener("change", ()=>{ renderSettlements(); renderGraph(); });
+
+/* экспорт/импорт/очистка */
+el("exportBtn").onclick = ()=>{
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download="kto-komu-dolzhen.json"; a.click();
+  URL.revokeObjectURL(a.href);
+};
+el("importBtn").onclick = ()=> el("importFile").click();
+el("importFile").addEventListener("change", e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload = ()=>{ try{ const d=JSON.parse(r.result); if(d.people&&d.expenses){ state=d; render(); } else alert("Не тот формат файла."); }
+                   catch(err){ alert("Не удалось прочитать файл."); } };
+  r.readAsText(f);
+  e.target.value="";
+});
+el("clearBtn").onclick = ()=>{ if(confirm("Удалить всех участников и все траты?")){ state={people:[],expenses:[]}; render(); } };
+
+/* старт */
+el("dateInput").value=today();
+render();
+</script>
+</body>
+</html>

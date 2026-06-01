@@ -1,0 +1,13 @@
+# Конфиг для Render.com (Blueprint). При импорте репозитория Render прочитает этот файл.
+services:
+  - type: web
+    name: stazhki-v-raschete
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python server.py"
+    envVars:
+      - key: DATABASE_URL      # строку подключения к Supabase Postgres задашь в Render вручную
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.12.6"
