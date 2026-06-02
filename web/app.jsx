@@ -409,7 +409,7 @@ function CreateGroupSheet({ open, onClose, onCreated }) {
 }
 
 // ───────────────────────── заглушка вне Телеграма ─────────────────────────
-function LockScreen({ bot }) {
+function LockScreen({ bot, diag }) {
   return (
     <div className="auth-wrap">
       <div className="auth-card card" style={{ textAlign: "center", alignItems: "center" }}>
@@ -420,6 +420,7 @@ function LockScreen({ bot }) {
           style={{ justifyContent: "center", marginTop: 14, textDecoration: "none", width: "100%", height: 48 }}>
           Открыть @{bot}
         </a>
+        {diag && <p style={{ marginTop: 14, fontSize: 11.5, color: "var(--text-3)", wordBreak: "break-word" }}>отладка: {diag}</p>}
       </div>
     </div>
   );
@@ -862,6 +863,7 @@ function Root() {
   const [groups, setGroups] = useState([]);
   const [group, setGroup] = useState(null);
   const [ready, setReady] = useState(false);
+  const [authErr, setAuthErr] = useState("");
 
   async function loadGroups() {
     const d = await api("/groups");
@@ -893,7 +895,7 @@ function Root() {
         try {
           const d = await api("/auth/telegram", { method: "POST", body: { initData: TG.initData } });
           tok.set(d.token); await loadGroups(); await handleJoin();
-        } catch (e) {}
+        } catch (e) { setAuthErr(String((e && e.message) || e)); }
       } else if (tok.get()) {
         try { await loadGroups(); await handleJoin(); } catch (e) { tok.set(null); }
       }
@@ -908,7 +910,12 @@ function Root() {
 
   if (!ready) return <div className="boot">Загрузка…</div>;
   if (!me) {
-    if (CFG.telegram && !CFG.devLogin) return <LockScreen bot={CFG.bot} />;
+    if (CFG.telegram && !CFG.devLogin) {
+      const diag = !TG ? "Telegram SDK не загрузился (window.Telegram пустой)"
+        : !TG.initData ? "нет initData — открыто не как мини-аппа (initData пустой)"
+        : (authErr ? ("вход отклонён сервером → " + authErr) : "проверка…");
+      return <LockScreen bot={CFG.bot} diag={diag} />;
+    }
     return <AuthScreen onAuthed={afterAuth} dark={dark} setDark={setDark} />;
   }
   if (!group) return <GroupsScreen me={me} groups={groups} dark={dark} setDark={setDark}
