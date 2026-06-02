@@ -86,9 +86,35 @@ SCHEMA = [
 ]
 
 
+LEGACY_TABLES = ["sessions", "expenses", "payments", "notifications", "members", "groups", "users"]
+
+
+def table_columns(conn, table):
+    if USE_PG:
+        rows = ex(conn, "SELECT column_name FROM information_schema.columns "
+                  "WHERE table_name=? AND table_schema='public'", (table,)).fetchall()
+        return {r["column_name"] for r in rows}
+    rows = ex(conn, "PRAGMA table_info(%s)" % table).fetchall()
+    return {r["name"] for r in rows}
+
+
+def migrate(conn):
+    # Если осталась старая несовместимая схема (users без tg_id) — удаляем старые таблицы,
+    # чтобы пересоздать под текущую модель. Данные были временными/тестовыми.
+    try:
+        cols = table_columns(conn, "users")
+        if cols and "tg_id" not in cols:
+            for t in LEGACY_TABLES:
+                ex(conn, ("DROP TABLE IF EXISTS %s CASCADE" if USE_PG else "DROP TABLE IF EXISTS %s") % t)
+            print("  migrate: обнаружена старая схема — таблицы пересозданы под группы")
+    except Exception as e:
+        print("  migrate: пропуск (%s)" % e)
+
+
 def init_db():
     conn = get_conn()
     try:
+        migrate(conn)
         for s in SCHEMA:
             ex(conn, s)
     finally:
@@ -306,7 +332,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-migrate"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
