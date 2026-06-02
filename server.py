@@ -18,6 +18,7 @@
 
 import os, json, re, time, hmac, hashlib, secrets, sqlite3
 from urllib.parse import urlparse, parse_qs, parse_qsl
+import urllib.request
 import http.server, socketserver
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +30,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 USE_PG = bool(DATABASE_URL)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")           # есть → продакшн-вход через Telegram
 DEV_LOGIN = not BOT_TOKEN                          # нет токена → разрешаем dev-логин (локально)
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "stazhki_v_raschete_bot")
+BOT_APP = os.environ.get("BOT_APP", "app")        # short name мини-аппы в BotFather (для ссылок startapp)
+APP_URL = (os.environ.get("APP_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
 if USE_PG:
     import psycopg
     from psycopg.rows import dict_row
@@ -224,6 +228,33 @@ def verify_telegram(init_data):
         return None
 
 
+def tg_api(method, payload):
+    """Вызов Telegram Bot API (без зависимостей, через urllib)."""
+    if not BOT_TOKEN:
+        return None
+    url = "https://api.telegram.org/bot%s/%s" % (BOT_TOKEN, method)
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.load(r)
+    except Exception as e:
+        print("tg_api %s error: %s" % (method, e))
+        return None
+
+
+def setup_telegram():
+    """Однократно при старте: регистрируем вебхук и кнопку-меню (если есть токен и адрес)."""
+    if not BOT_TOKEN or not APP_URL:
+        return
+    tg_api("setWebhook", {"url": APP_URL + "/api/tg/webhook",
+                          "allowed_updates": ["message"]})
+    tg_api("setChatMenuButton", {"menu_button": {
+        "type": "web_app", "text": "Открыть",
+        "web_app": {"url": APP_URL + "/"}}})
+    print("  Telegram: webhook → %s/api/tg/webhook" % APP_URL)
+
+
 # ─────────────────────────── HTTP ───────────────────────────
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "CashServer/3.0"
@@ -273,6 +304,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         conn = get_conn()
         try:
             # ---- открытые маршруты (без сессии) ----
+            if method == "GET" and path == "/api/config":
+                return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
+                                   "bot": BOT_USERNAME, "app": BOT_APP})
+            if method == "GET" and path == "/api/health":
+                return self._json({"ok": True})
+
             if method == "POST" and path == "/api/auth/telegram":
                 tg = verify_telegram(self._body().get("initData"))
                 if not tg:
@@ -528,9 +565,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                    "%s не получил(а) перевод %s — долг вернулся" % (to_mem["display_name"], fmt_rub(p["amount"])), {})
         return self._json(group_state(conn, p["group_id"], me["id"]) | {"me": user_public(me)})
 
-    # ---- Telegram webhook (Этап 2; пока заглушка-эхо) ----
+    # ---- Telegram webhook: /start → кнопка запуска мини-аппы ----
     def _tg_webhook(self, conn, update):
-        # На Этапе 2 здесь: /start, deep-link присоединение к группе, кнопка открытия Mini App.
+        msg = update.get("message") or update.get("edited_message") or {}
+        text = (msg.get("text") or "").strip()
+        cid = (msg.get("chat") or {}).get("id")
+        if cid and text.startswith("/start"):
+            parts = text.split(maxsplit=1)
+            code = parts[1].strip() if len(parts) > 1 else ""
+            open_url = (APP_URL + "/?join=" + code) if (APP_URL and code) else (APP_URL + "/" if APP_URL else "")
+            txt = ("Привет! Это «Стажки в расчёте» — делим расходы с друзьями.\n"
+                   + ("Нажми кнопку ниже, чтобы войти в группу." if code else "Нажми кнопку ниже, чтобы открыть приложение."))
+            payload = {"chat_id": cid, "text": txt}
+            if open_url:
+                payload["reply_markup"] = {"inline_keyboard": [[
+                    {"text": "Открыть приложение", "web_app": {"url": open_url}}]]}
+            tg_api("sendMessage", payload)
         return self._json({"ok": True})
 
     # ---- статика ----
@@ -559,6 +609,7 @@ class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def main():
     init_db()
+    setup_telegram()
     store = "Postgres (облако)" if USE_PG else "SQLite (локально)"
     auth = "Telegram" if BOT_TOKEN else "dev-логин (локально)"
     print("\n  «Стажки в расчёте» v3 (группы)")

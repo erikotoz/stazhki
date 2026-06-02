@@ -5,6 +5,11 @@ const { useState, useEffect, useMemo } = React;
 const S = window.Settle;
 const APP_NAME = "Стажки в расчёте";
 
+// Telegram WebApp (если открыто внутри Телеграма)
+const TG = window.Telegram && window.Telegram.WebApp;
+const inTelegram = !!(TG && TG.initData);
+let CFG = { telegram: false, devLogin: true, bot: "stazhki_v_raschete_bot", app: "app" };
+
 // ───────────────────────── API ─────────────────────────
 const TOKEN_KEY = "kkd-token";
 const tok = {
@@ -403,6 +408,23 @@ function CreateGroupSheet({ open, onClose, onCreated }) {
   );
 }
 
+// ───────────────────────── заглушка вне Телеграма ─────────────────────────
+function LockScreen({ bot }) {
+  return (
+    <div className="auth-wrap">
+      <div className="auth-card card" style={{ textAlign: "center", alignItems: "center" }}>
+        <div className="brand-mark" style={{ width: 46, height: 46, fontSize: 24, margin: "0 auto" }}>₽</div>
+        <div className="auth-title" style={{ marginTop: 12 }}>{APP_NAME}</div>
+        <p className="auth-sub" style={{ marginTop: 8 }}>Приложение работает внутри Телеграма.</p>
+        <a className="btn-primary" href={"https://t.me/" + bot} target="_blank" rel="noreferrer"
+          style={{ justifyContent: "center", marginTop: 14, textDecoration: "none", width: "100%", height: 48 }}>
+          Открыть @{bot}
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ───────────────────────── экран входа (dev-логин; в Телеграме станет авто) ─────────────────────────
 function AuthScreen({ onAuthed, dark, setDark }) {
   const [un, setUn] = useState("");
@@ -478,7 +500,7 @@ function GroupsScreen({ me, groups, dark, setDark, onOpen, onCreated, onLogout, 
             </span>
             <button className="icon-btn" onClick={() => setSettings(true)} aria-label="Настройки"><Ic.gear /></button>
             <button className="icon-btn" onClick={() => setDark((v) => !v)} aria-label="Тема">{dark ? <Ic.sun /> : <Ic.moon />}</button>
-            <button className="icon-btn" onClick={onLogout} aria-label="Выйти"><Ic.logout /></button>
+            {!inTelegram && <button className="icon-btn" onClick={onLogout} aria-label="Выйти"><Ic.logout /></button>}
           </div>
         </div>
       </header>
@@ -619,8 +641,12 @@ function GroupView({ initial, dark, setDark, onBack }) {
     setCopied(true); setTimeout(() => setCopied(false), 1600);
   }
   function copyInvite() {
-    const url = location.origin + "/?join=" + groupMeta.inviteCode;
+    const code = groupMeta.inviteCode;
+    const url = inTelegram
+      ? `https://t.me/${CFG.bot}/${CFG.app}?startapp=${code}`
+      : location.origin + "/?join=" + code;
     try { navigator.clipboard.writeText(url); } catch (e) {}
+    if (inTelegram && TG.switchInlineQuery) { /* можно делиться через Телеграм */ }
     setInvCopied(true); setTimeout(() => setInvCopied(false), 1600);
   }
 
@@ -842,31 +868,49 @@ function Root() {
     setMe(d.user); setGroups(d.groups);
     return d;
   }
-  async function handleJoinParam() {
-    const code = new URLSearchParams(location.search).get("join");
-    if (!code) return false;
+  function joinCode() {
+    const q = new URLSearchParams(location.search).get("join");
+    const sp = inTelegram && TG.initDataUnsafe ? TG.initDataUnsafe.start_param : null;
+    return q || sp || null;
+  }
+  async function handleJoin() {
+    const code = joinCode();
+    if (!code) return;
     try {
       const d = await api("/groups/join", { method: "POST", body: { code } });
-      history.replaceState({}, "", location.pathname);
-      setGroup(d); return true;
-    } catch (e) { history.replaceState({}, "", location.pathname); return false; }
+      setGroup(d);
+    } catch (e) {}
+    history.replaceState({}, "", location.pathname);
   }
   useEffect(() => {
     (async () => {
-      if (tok.get()) {
-        try { await loadGroups(); await handleJoinParam(); } catch (e) { tok.set(null); }
+      try { CFG = await api("/config"); } catch (e) {}
+      if (inTelegram) {
+        try {
+          TG.ready(); TG.expand();
+          if (TG.colorScheme && localStorage.getItem("kkd-theme") === null) setDark(TG.colorScheme === "dark");
+        } catch (e) {}
+        try {
+          const d = await api("/auth/telegram", { method: "POST", body: { initData: TG.initData } });
+          tok.set(d.token); await loadGroups(); await handleJoin();
+        } catch (e) {}
+      } else if (tok.get()) {
+        try { await loadGroups(); await handleJoin(); } catch (e) { tok.set(null); }
       }
       setReady(true);
     })();
   }, []);
 
   async function openGroup(gid) { setGroup(await api("/groups/" + gid)); }
-  async function afterAuth() { await loadGroups(); await handleJoinParam(); }
+  async function afterAuth() { await loadGroups(); await handleJoin(); }
   function logout() { api("/auth/logout", { method: "POST" }).catch(() => {}); tok.set(null); setMe(null); setGroups([]); setGroup(null); }
   async function backToGroups() { setGroup(null); await loadGroups(); }
 
   if (!ready) return <div className="boot">Загрузка…</div>;
-  if (!me) return <AuthScreen onAuthed={afterAuth} dark={dark} setDark={setDark} />;
+  if (!me) {
+    if (CFG.telegram && !CFG.devLogin) return <LockScreen bot={CFG.bot} />;
+    return <AuthScreen onAuthed={afterAuth} dark={dark} setDark={setDark} />;
+  }
   if (!group) return <GroupsScreen me={me} groups={groups} dark={dark} setDark={setDark}
     onOpen={openGroup} onCreated={(d) => setGroup(d)} onLogout={logout} reload={loadGroups} />;
   return <GroupView key={group.group.id} initial={group} dark={dark} setDark={setDark} onBack={backToGroups} />;
