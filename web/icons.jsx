@@ -73,6 +73,18 @@ Ic.bell = (p) => svg(<>
 Ic.send = (p) => svg(<>
   <path d="M21 4 3 11l6 2 2 6 4-7M9 13l6-6" />
 </>, p);
+Ic.gear = (p) => svg(<>
+  <circle cx="12" cy="12" r="3.2" />
+  <path d="M12 2.5v2.4M12 19.1v2.4M4.2 7l2 1.2M17.8 15.8l2 1.2M19.8 7l-2 1.2M6.2 15.8l-2 1.2" />
+</>, p);
+Ic.back = (p) => svg(<><path d="M15 5l-7 7 7 7" /></>, p);
+Ic.link = (p) => svg(<>
+  <path d="M9 15l6-6M10.5 6.5 12 5a4 4 0 0 1 6 6l-1.5 1.5M13.5 17.5 12 19a4 4 0 0 1-6-6l1.5-1.5" />
+</>, p);
+Ic.ghost = (p) => svg(<>
+  <path d="M5 21V9a7 7 0 0 1 14 0v12l-2.3-1.6L14.4 21l-2.4-1.6L9.6 21l-2.3-1.6Z" />
+  <circle cx="9.5" cy="10" r="1" fill="currentColor" stroke="none" /><circle cx="14.5" cy="10" r="1" fill="currentColor" stroke="none" />
+</>, p);
 
 const CATEGORIES = [
   { id: "food", label: "Еда", icon: Ic.food, hue: 28 },

@@ -1,10 +1,11 @@
-// app.jsx — «Стажки в расчёте». Многопользовательская версия с входом,
-// личной разбивкой долгов, переводами и уведомлениями. Данные с сервера (server.py).
+// app.jsx — «Стажки в расчёте». Версия с ГРУППАМИ.
+// Экран групп → группа (балансы, граф, переводы, лента) → настройки.
+// Данные с сервера (server.py). Участники группы — «места» (member), могут быть призраками.
 const { useState, useEffect, useMemo } = React;
 const S = window.Settle;
 const APP_NAME = "Стажки в расчёте";
 
-// ───────────────────────── API-клиент ─────────────────────────
+// ───────────────────────── API ─────────────────────────
 const TOKEN_KEY = "kkd-token";
 const tok = {
   get: () => localStorage.getItem(TOKEN_KEY),
@@ -15,8 +16,7 @@ async function api(path, opts = {}) {
   const t = tok.get();
   if (t) headers["Authorization"] = "Bearer " + t;
   const res = await fetch("/api" + path, {
-    method: opts.method || "GET",
-    headers,
+    method: opts.method || "GET", headers,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   let data = {};
@@ -61,12 +61,12 @@ function parseAmount(s) {
   const n = parseFloat(String(s).replace(",", ".").replace(/\s/g, ""));
   return isNaN(n) ? 0 : n;
 }
-function expenseInvolves(exp, uid) {
-  if (exp.payer === uid) return true;
+function expenseInvolves(exp, id) {
+  if (exp.payer === id) return true;
   const sp = exp.split || {};
-  if (sp.mode === "equal") return (sp.among || []).includes(uid);
-  if (sp.mode === "shares") return (sp.shares || {})[uid] > 0;
-  if (sp.mode === "exact") return (sp.exact || {})[uid] != null;
+  if (sp.mode === "equal") return (sp.among || []).includes(id);
+  if (sp.mode === "shares") return (sp.shares || {})[id] > 0;
+  if (sp.mode === "exact") return (sp.exact || {})[id] != null;
   return false;
 }
 function splitCount(exp) {
@@ -89,14 +89,12 @@ function pluralTransfer(n) {
   return "переводов";
 }
 
-// Личная разбивка относительно меня: нетто по парам (с учётом переводов) + «за что».
-// c — вклад строки в «мне должны» (копейки): + они мне, − я им.
-function personalBreakdown(meId, users, expenses, payments) {
-  const ids = users.map((u) => u.id);
-  const nameOf = Object.fromEntries(users.map((u) => [u.id, u.name]));
+// Личная разбивка относительно моего места: нетто по парам (с учётом переводов) + «за что».
+function personalBreakdown(meId, members, expenses, payments) {
+  const ids = members.map((u) => u.id);
+  const nameOf = Object.fromEntries(members.map((u) => [u.id, u.name]));
   const per = {};
   const ensure = (id) => (per[id] = per[id] || { id, name: nameOf[id] || id, net: 0, items: [] });
-
   expenses.forEach((exp) => {
     const owed = S.owedForExpense(exp, ids);
     if (exp.payer === meId) {
@@ -114,7 +112,6 @@ function personalBreakdown(meId, users, expenses, payments) {
     if (p.from === meId) { const e = ensure(p.to); e.net += k; e.items.push({ c: k, type: "payment", payment: p, sent: true }); }
     else if (p.to === meId) { const e = ensure(p.from); e.net -= k; e.items.push({ c: -k, type: "payment", payment: p, sent: false }); }
   });
-
   const tOf = (it) => (it.type === "payment" ? (it.payment.created || 0)
     : new Date((it.exp.date || "1970-01-01") + "T00:00:00").getTime() / 1000);
   const owedToMe = [], iOwe = [];
@@ -125,18 +122,15 @@ function personalBreakdown(meId, users, expenses, payments) {
   });
   owedToMe.sort((a, b) => b.net - a.net);
   iOwe.sort((a, b) => a.net - b.net);
-  return {
-    owedToMe, iOwe,
+  return { owedToMe, iOwe,
     totalOwedToMe: owedToMe.reduce((a, e) => a + e.net, 0),
-    totalIOwe: iOwe.reduce((a, e) => a - e.net, 0),
-  };
+    totalIOwe: iOwe.reduce((a, e) => a - e.net, 0) };
 }
 
 // ───────────────────────── разбивка: строки ─────────────────────────
 function BreakdownItem({ it }) {
   if (it.type === "payment") {
-    const pos = it.c > 0;
-    const st = it.payment.status;
+    const pos = it.c > 0, st = it.payment.status;
     const stTxt = st === "confirmed" ? "✓ подтверждён" : st === "disputed" ? "оспорен" : "ждёт подтверждения";
     return (
       <div className="pd-item">
@@ -161,9 +155,12 @@ function BreakdownItem({ it }) {
   );
 }
 
-function DebtorRow({ entry, dir, colorOf, onPay }) {
+function DebtorRow({ entry, dir, colorOf, onPay, payInfo }) {
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const amt = dir === "owed" ? entry.net : -entry.net;
+  const pi = payInfo && payInfo[entry.id];
+  const hasReq = pi && (pi.payPhone || pi.payBank);
   return (
     <div className="pd">
       <button className={"pd-head" + (open ? " open" : "")} onClick={() => setOpen((o) => !o)}>
@@ -177,6 +174,19 @@ function DebtorRow({ entry, dir, colorOf, onPay }) {
       {open && (
         <div className="pd-items">
           {entry.items.map((it, i) => <BreakdownItem key={i} it={it} />)}
+          {dir === "owe" && hasReq && (
+            <div className="pay-req">
+              <div className="pay-req-info">
+                <div className="pay-req-l">Куда перевести {entry.name}</div>
+                <div className="pay-req-v num">{[pi.payPhone, pi.payBank].filter(Boolean).join("  ·  ")}</div>
+              </div>
+              <button className="icon-btn" style={{ width: 32, height: 32 }} aria-label="Скопировать"
+                onClick={() => { try { navigator.clipboard.writeText(pi.payPhone || pi.payBank || ""); } catch (e) {}
+                  setCopied(true); setTimeout(() => setCopied(false), 1400); }}>
+                {copied ? <Ic.check /> : <Ic.copy />}
+              </button>
+            </div>
+          )}
           {dir === "owe" && (
             <button className="pay-btn" onClick={() => onPay(entry)}>
               <Ic.send /> Я перевёл(а) {entry.name} · {S.fmt(amt)}
@@ -188,7 +198,7 @@ function DebtorRow({ entry, dir, colorOf, onPay }) {
   );
 }
 
-function BalanceSection({ title, total, dir, entries, colorOf, emptyText, onPay }) {
+function BalanceSection({ title, total, dir, entries, colorOf, emptyText, onPay, payInfo }) {
   const [open, setOpen] = useState(true);
   return (
     <div className="bd-sec">
@@ -199,7 +209,7 @@ function BalanceSection({ title, total, dir, entries, colorOf, emptyText, onPay 
       </button>
       {open && (entries.length ? (
         <div className="bd-list">
-          {entries.map((e) => <DebtorRow key={e.id} entry={e} dir={dir} colorOf={colorOf} onPay={onPay} />)}
+          {entries.map((e) => <DebtorRow key={e.id} entry={e} dir={dir} colorOf={colorOf} onPay={onPay} payInfo={payInfo} />)}
         </div>
       ) : <div className="bd-empty">{emptyText}</div>)}
     </div>
@@ -223,7 +233,7 @@ function PaymentDialog({ open, peer, defaultAmount, onClose, onConfirm }) {
         </div>
         <div className="sheet-body">
           <div className="pay-peer">
-            <div className="av" style={{ background: peer.color }}>{peer.name[0]}</div>
+            <div className="av" style={{ background: peer.color }}>{(peer.name || "?")[0]}</div>
             <div><div style={{ fontSize: 12.5, color: "var(--text-2)" }}>Получатель</div>
               <div style={{ fontWeight: 700, fontSize: 16 }}>{peer.name}</div></div>
           </div>
@@ -274,10 +284,8 @@ function NotificationsPanel({ open, notifications, paymentsById, onClose, onConf
                       <button className="btn-mini no" onClick={() => onDispute(pay.id)}>Не получил</button>
                     </div>
                   )}
-                  {n.type === "payment_recorded" && pay && pay.status === "confirmed" &&
-                    <div className="ntf-done">✓ подтверждено</div>}
-                  {n.type === "payment_recorded" && pay && pay.status === "disputed" &&
-                    <div className="ntf-done neg">отмечено как не полученное</div>}
+                  {n.type === "payment_recorded" && pay && pay.status === "confirmed" && <div className="ntf-done">✓ подтверждено</div>}
+                  {n.type === "payment_recorded" && pay && pay.status === "disputed" && <div className="ntf-done neg">отмечено как не полученное</div>}
                 </div>
               </div>
             );
@@ -288,26 +296,126 @@ function NotificationsPanel({ open, notifications, paymentsById, onClose, onConf
   );
 }
 
-// ───────────────────────── экран входа ─────────────────────────
+// ───────────────────────── настройки (имя + реквизиты) ─────────────────────────
+function SettingsSheet({ open, initial, onClose, onSave }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [bank, setBank] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) { setName(initial.name || ""); setPhone(initial.payPhone || ""); setBank(initial.payBank || ""); setBusy(false); }
+  }, [open]);
+  if (!open) return null;
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="sheet" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-grab" />
+        <div className="sheet-h"><b>Настройки</b>
+          <button className="icon-btn" onClick={onClose} aria-label="Закрыть"
+            style={{ width: 34, height: 34, boxShadow: "none", background: "var(--surface-2)" }}><Ic.close /></button>
+        </div>
+        <div className="sheet-body">
+          <div className="field">
+            <div className="flabel">Ваше имя</div>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Как вас показывать" />
+          </div>
+          <div className="field">
+            <div className="flabel">Номер для перевода</div>
+            <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+7 999 123-45-67" />
+          </div>
+          <div className="field">
+            <div className="flabel">Банк</div>
+            <input className="input" value={bank} onChange={(e) => setBank(e.target.value)} placeholder="Например, Тинькофф" />
+          </div>
+          <p className="hint">Номер и банк видят те, кто должен вам — чтобы знать, куда перевести.</p>
+        </div>
+        <div className="sheet-foot">
+          <button className="btn-primary" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }}
+            onClick={async () => { setBusy(true); try { await onSave({ name: name.trim(), payPhone: phone.trim(), payBank: bank.trim() }); } finally { setBusy(false); } }}>
+            Сохранить
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────── создание группы ─────────────────────────
+function CreateGroupSheet({ open, onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [rows, setRows] = useState([{ name: "", username: "" }, { name: "", username: "" }]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => { if (open) { setName(""); setRows([{ name: "", username: "" }, { name: "", username: "" }]); setErr(""); setBusy(false); } }, [open]);
+  if (!open) return null;
+  const setRow = (i, k, v) => setRows((r) => r.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
+  async function submit() {
+    setErr("");
+    if (!name.trim()) { setErr("Введите название группы."); return; }
+    const members = rows.filter((r) => r.name.trim() || r.username.trim())
+      .map((r) => ({ name: r.name.trim(), username: r.username.trim() }));
+    setBusy(true);
+    try { onCreated(await api("/groups", { method: "POST", body: { name: name.trim(), members } })); }
+    catch (ex) { setErr(ex.message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="sheet" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-grab" />
+        <div className="sheet-h"><b>Новая группа</b>
+          <button className="icon-btn" onClick={onClose} aria-label="Закрыть"
+            style={{ width: 34, height: 34, boxShadow: "none", background: "var(--surface-2)" }}><Ic.close /></button>
+        </div>
+        <div className="sheet-body">
+          <div className="field">
+            <div className="flabel">Название</div>
+            <input className="input" value={name} autoFocus onChange={(e) => setName(e.target.value)} placeholder="Поездка в горы" />
+          </div>
+          <div className="field">
+            <div className="flabel">Участники</div>
+            <p className="hint" style={{ marginTop: -2 }}>Впишите имя и (если есть) @ник в Телеграме. Пока человек не зашёл,
+              он «призрак» — за него уже можно заносить траты. Себя добавлять не нужно.</p>
+            <div className="cg-list">
+              {rows.map((r, i) => (
+                <div className="cg-row" key={i}>
+                  <input className="input" value={r.name} placeholder="Имя"
+                    onChange={(e) => setRow(i, "name", e.target.value)} />
+                  <input className="input" value={r.username} placeholder="@ник (необязательно)"
+                    onChange={(e) => setRow(i, "username", e.target.value)} />
+                  <button className="icon-btn" style={{ width: 38, flex: "0 0 auto" }} aria-label="Убрать"
+                    onClick={() => setRows((rr) => rr.filter((_, j) => j !== i))}><Ic.close /></button>
+                </div>
+              ))}
+            </div>
+            <button className="add-row" onClick={() => setRows((r) => [...r, { name: "", username: "" }])}>
+              <Ic.plus /> Ещё участник
+            </button>
+          </div>
+          {err && <div className="auth-err">{err}</div>}
+        </div>
+        <div className="sheet-foot">
+          <button className="btn-primary" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }} onClick={submit}>
+            Создать группу
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────── экран входа (dev-логин; в Телеграме станет авто) ─────────────────────────
 function AuthScreen({ onAuthed, dark, setDark }) {
-  const [tab, setTab] = useState("login");
-  const [nick, setNick] = useState("");
-  const [pw, setPw] = useState("");
+  const [un, setUn] = useState("");
   const [name, setName] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-
   async function submit(e) {
-    e.preventDefault();
-    setErr(""); setBusy(true);
+    e.preventDefault(); setErr(""); setBusy(true);
     try {
-      const body = tab === "login" ? { nick, password: pw } : { nick, password: pw, name };
-      const d = await api(tab === "login" ? "/login" : "/register", { method: "POST", body });
-      tok.set(d.token);
-      await onAuthed();
+      const d = await api("/auth/dev", { method: "POST", body: { username: un.trim(), name: name.trim() } });
+      tok.set(d.token); await onAuthed();
     } catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   }
-
   return (
     <div className="auth-wrap">
       <button className="icon-btn auth-theme" onClick={() => setDark((v) => !v)} aria-label="Тема">
@@ -318,88 +426,159 @@ function AuthScreen({ onAuthed, dark, setDark }) {
           <div className="brand-mark" style={{ width: 40, height: 40, fontSize: 21 }}>₽</div>
           <div>
             <div className="auth-title">{APP_NAME}</div>
-            <div className="auth-sub">Войдите, чтобы видеть свои расчёты</div>
+            <div className="auth-sub">Локальный вход (в Телеграме будет автоматически)</div>
           </div>
         </div>
-        <div className="seg" style={{ display: "flex", width: "100%", margin: "4px 0 4px" }}>
-          <button type="button" className={tab === "login" ? "on" : ""} onClick={() => { setTab("login"); setErr(""); }}>Вход</button>
-          <button type="button" className={tab === "register" ? "on" : ""} onClick={() => { setTab("register"); setErr(""); }}>Регистрация</button>
+        <div className="field">
+          <div className="flabel">Ник (@username)</div>
+          <input className="input" value={un} autoFocus autoComplete="username"
+            onChange={(e) => setUn(e.target.value)} placeholder="например, egor" />
         </div>
         <div className="field">
-          <div className="flabel">Ник</div>
-          <input className="input" value={nick} autoFocus autoComplete="username"
-            onChange={(e) => setNick(e.target.value)} placeholder="например, egor" />
-        </div>
-        {tab === "register" && (
-          <div className="field">
-            <div className="flabel">Имя (как показывать)</div>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Егор" />
-          </div>
-        )}
-        <div className="field">
-          <div className="flabel">Пароль</div>
-          <input className="input" type="password" value={pw} autoComplete="current-password"
-            onChange={(e) => setPw(e.target.value)} placeholder="••••••" />
+          <div className="flabel">Имя</div>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Егор" />
         </div>
         {err && <div className="auth-err">{err}</div>}
         <button className="btn-primary" type="submit" disabled={busy}
           style={{ width: "100%", height: 50, justifyContent: "center", fontSize: 16, marginTop: 4, opacity: busy ? 0.6 : 1 }}>
-          {busy ? "…" : tab === "login" ? "Войти" : "Создать аккаунт"}
+          {busy ? "…" : "Войти"}
         </button>
-        <div className="auth-hint">
-          {tab === "login" ? "Нет аккаунта? Нажмите «Регистрация» выше." : "Уже есть аккаунт? Нажмите «Вход» выше."}
-        </div>
       </form>
     </div>
   );
 }
 
-// ───────────────────────── главное приложение ─────────────────────────
-function App({ me, initial, dark, setDark, onLogout }) {
-  const [users, setUsers] = useState(initial.users);
+// ───────────────────────── экран списка групп ─────────────────────────
+function GroupsScreen({ me, groups, dark, setDark, onOpen, onCreated, onLogout, reload }) {
+  const [creating, setCreating] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [joining, setJoining] = useState(false);
+
+  async function saveProfile(v) {
+    await api("/me/profile", { method: "PUT", body: v });
+    await reload(); setSettings(false);
+  }
+  async function join() {
+    if (!joinCode.trim()) return;
+    setJoining(true);
+    try { onCreated(await api("/groups/join", { method: "POST", body: { code: joinCode.trim() } })); }
+    catch (ex) { alert(ex.message); } finally { setJoining(false); }
+  }
+
+  return (
+    <div className="app">
+      <header className="hdr">
+        <div className="hdr-top">
+          <div className="brand"><div className="brand-mark">₽</div>{APP_NAME}</div>
+          <div className="hdr-actions">
+            <span className="me-chip">
+              <span className="av" style={{ background: me.color, width: 26, height: 26, fontSize: 11 }}>{(me.name || "?")[0]}</span>
+              <span className="me-name">{me.name}</span>
+            </span>
+            <button className="icon-btn" onClick={() => setSettings(true)} aria-label="Настройки"><Ic.gear /></button>
+            <button className="icon-btn" onClick={() => setDark((v) => !v)} aria-label="Тема">{dark ? <Ic.sun /> : <Ic.moon />}</button>
+            <button className="icon-btn" onClick={onLogout} aria-label="Выйти"><Ic.logout /></button>
+          </div>
+        </div>
+      </header>
+
+      <div className="card card-pad" style={{ marginTop: "var(--gap-lg)" }}>
+        <div className="card-h"><span className="card-title">Ваши группы</span></div>
+        {groups.length ? (
+          <div className="glist">
+            {groups.map((g) => (
+              <button className="gcard" key={g.id} onClick={() => onOpen(g.id)}>
+                <div className="gcard-mark"><Ic.users /></div>
+                <div className="gcard-info">
+                  <div className="gcard-name">{g.name}</div>
+                  <div className="gcard-sub">{g.memberCount} {pluralPeople(g.memberCount)}</div>
+                </div>
+                <Ic.arrow />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="empty">
+            <div className="empty-emoji">👥</div>
+            <div className="empty-t">Пока нет групп</div>
+            <div className="empty-d">Создайте группу для своей компании — и заносите траты.</div>
+          </div>
+        )}
+        <button className="btn-primary" style={{ width: "100%", justifyContent: "center", marginTop: 14 }}
+          onClick={() => setCreating(true)}><Ic.plus /> Создать группу</button>
+      </div>
+
+      <div className="card card-pad">
+        <div className="card-h"><span className="card-title">Войти по коду приглашения</span></div>
+        <div className="row" style={{ display: "flex", gap: 8 }}>
+          <input className="input" value={joinCode} placeholder="код из ссылки"
+            onChange={(e) => setJoinCode(e.target.value)} style={{ flex: 1 }} />
+          <button className="btn-primary" style={{ flex: "0 0 auto" }} disabled={joining} onClick={join}>Войти</button>
+        </div>
+      </div>
+
+      <CreateGroupSheet open={creating} onClose={() => setCreating(false)} onCreated={(d) => { setCreating(false); onCreated(d); }} />
+      <SettingsSheet open={settings} initial={me} onClose={() => setSettings(false)} onSave={saveProfile} />
+    </div>
+  );
+}
+
+// ───────────────────────── группа ─────────────────────────
+function GroupView({ initial, dark, setDark, onBack }) {
+  const groupMeta = initial.group;
+  const gid = groupMeta.id;
+  const [members, setMembers] = useState(initial.members);
   const [expenses, setExpenses] = useState(initial.expenses);
   const [payments, setPayments] = useState(initial.payments || []);
   const [notifications, setNotifications] = useState(initial.notifications || []);
+  const [payInfo, setPayInfo] = useState(initial.payInfo || {});
+  const [meUser, setMeUser] = useState(initial.me);
   const [mode, setMode] = useState("min");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [invCopied, setInvCopied] = useState(false);
   const [feedMine, setFeedMine] = useState(false);
-  const [payTo, setPayTo] = useState(null);     // {id,name,color,amount}
+  const [payTo, setPayTo] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [settings, setSettings] = useState(false);
+
+  const meMid = useMemo(() => (members.find((m) => m.isMe) || {}).id || initial.myMemberId, [members]);
 
   const applyState = (d) => {
-    if (d.users) setUsers(d.users);
+    if (d.members) setMembers(d.members);
     if (d.expenses) setExpenses(d.expenses);
     if (d.payments) setPayments(d.payments);
     if (d.notifications) setNotifications(d.notifications);
+    if (d.payInfo) setPayInfo(d.payInfo);
+    if (d.me) setMeUser(d.me);
   };
 
-  // поллинг изменений (траты, переводы, уведомления друзей)
   useEffect(() => {
     const iv = setInterval(async () => {
-      if (sheetOpen || payTo || notifOpen || document.hidden) return;
-      try { applyState(await api("/state")); } catch (e) {}
+      if (sheetOpen || payTo || notifOpen || settings || document.hidden) return;
+      try { applyState(await api("/groups/" + gid)); } catch (e) {}
     }, 8000);
     return () => clearInterval(iv);
-  }, [sheetOpen, payTo, notifOpen]);
+  }, [sheetOpen, payTo, notifOpen, settings]);
 
   const activePayments = useMemo(() => payments.filter((p) => p.status !== "disputed"), [payments]);
   const paymentsById = useMemo(() => Object.fromEntries(payments.map((p) => [p.id, p])), [payments]);
-  const colorById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u.color])), [users]);
+  const colorById = useMemo(() => Object.fromEntries(members.map((u) => [u.id, u.color])), [members]);
   const colorOf = (id) => colorById[id] || "oklch(0.62 0.14 260)";
-  const names = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u.name])), [users]);
+  const names = useMemo(() => Object.fromEntries(members.map((u) => [u.id, u.name])), [members]);
   const unread = notifications.filter((n) => !n.read).length;
 
-  const balances = useMemo(() => S.computeBalances(users, expenses, activePayments), [users, expenses, activePayments]);
-  const paid = useMemo(() => S.totalPaid(users, expenses), [users, expenses]);
+  const balances = useMemo(() => S.computeBalances(members, expenses, activePayments), [members, expenses, activePayments]);
+  const paid = useMemo(() => S.totalPaid(members, expenses), [members, expenses]);
   const transfers = useMemo(
-    () => (mode === "min" ? S.minimalTransfers(balances) : S.pairwiseTransfers(users, expenses, activePayments)),
-    [mode, balances, users, expenses, activePayments]);
+    () => (mode === "min" ? S.minimalTransfers(balances) : S.pairwiseTransfers(members, expenses, activePayments)),
+    [mode, balances, members, expenses, activePayments]);
   const totalSpent = useMemo(() => expenses.reduce((a, e) => a + Math.round(e.amount * 100), 0), [expenses]);
   const allSettled = transfers.length === 0 && expenses.length > 0;
-  const breakdown = useMemo(() => personalBreakdown(me.id, users, expenses, activePayments),
-    [me.id, users, expenses, activePayments]);
+  const breakdown = useMemo(() => personalBreakdown(meMid, members, expenses, activePayments),
+    [meMid, members, expenses, activePayments]);
 
   function openNew() { setEditing(null); setSheetOpen(true); }
   function openEdit(exp) { setEditing(exp); setSheetOpen(true); }
@@ -408,7 +587,7 @@ function App({ me, initial, dark, setDark, onLogout }) {
       const isEdit = expenses.some((e) => e.id === exp.id);
       const d = isEdit
         ? await api("/expenses/" + exp.id, { method: "PUT", body: exp })
-        : await api("/expenses", { method: "POST", body: exp });
+        : await api("/groups/" + gid + "/expenses", { method: "POST", body: exp });
       applyState(d); setSheetOpen(false); setEditing(null);
     } catch (ex) { alert(ex.message); }
   }
@@ -420,28 +599,34 @@ function App({ me, initial, dark, setDark, onLogout }) {
     setPayTo({ id: entry.id, name: entry.name, color: colorOf(entry.id), amount: Math.round((-entry.net) / 100) });
   }
   async function confirmPay(amount) {
-    try { applyState(await api("/payments", { method: "POST", body: { to: payTo.id, amount } })); setPayTo(null); }
+    try { applyState(await api("/groups/" + gid + "/payments", { method: "POST", body: { to: payTo.id, amount } })); setPayTo(null); }
     catch (ex) { alert(ex.message); }
   }
   async function openNotifs() {
     setNotifOpen(true);
-    try { applyState(await api("/notifications/read", { method: "POST" })); } catch (e) {}
+    try { await api("/notifications/read", { method: "POST" }); setNotifications((ns) => ns.map((n) => ({ ...n, read: true }))); } catch (e) {}
   }
-  async function confirmReceipt(pid) {
-    try { applyState(await api("/payments/" + pid + "/confirm", { method: "POST" })); } catch (ex) { alert(ex.message); }
-  }
-  async function disputeReceipt(pid) {
-    try { applyState(await api("/payments/" + pid + "/dispute", { method: "POST" })); } catch (ex) { alert(ex.message); }
+  async function confirmReceipt(pid) { try { applyState(await api("/payments/" + pid + "/confirm", { method: "POST" })); } catch (ex) { alert(ex.message); } }
+  async function disputeReceipt(pid) { try { applyState(await api("/payments/" + pid + "/dispute", { method: "POST" })); } catch (ex) { alert(ex.message); } }
+  async function saveSettings(v) {
+    await api("/me/profile", { method: "PUT", body: v });
+    const d = await api("/members/" + meMid, { method: "PUT", body: { name: v.name } });
+    applyState(d); setSettings(false);
   }
   function copyTransfers() {
     const txt = transfers.map((tr) => `${names[tr.from]} → ${names[tr.to]} · ${S.fmt(tr.amount)}`).join("\n");
     try { navigator.clipboard.writeText(txt); } catch (e) {}
     setCopied(true); setTimeout(() => setCopied(false), 1600);
   }
+  function copyInvite() {
+    const url = location.origin + "/?join=" + groupMeta.inviteCode;
+    try { navigator.clipboard.writeText(url); } catch (e) {}
+    setInvCopied(true); setTimeout(() => setInvCopied(false), 1600);
+  }
 
   const grouped = useMemo(() => {
     let list = [...expenses];
-    if (feedMine) list = list.filter((e) => expenseInvolves(e, me.id));
+    if (feedMine) list = list.filter((e) => expenseInvolves(e, meMid));
     list.sort((a, b) => (a.date < b.date ? 1 : -1));
     const g = [];
     list.forEach((e) => {
@@ -451,21 +636,22 @@ function App({ me, initial, dark, setDark, onLogout }) {
       bucket.items.push(e);
     });
     return g;
-  }, [expenses, feedMine, me.id]);
+  }, [expenses, feedMine, meMid]);
 
-  const PartCard = ({ p }) => {
-    const b = balances[p.id] || 0;
+  const PartCard = ({ m }) => {
+    const b = balances[m.id] || 0;
     const cls = Math.abs(b) < 50 ? "zero" : b > 0 ? "pos" : "neg";
-    const isMe = p.id === me.id;
-    const label = Math.abs(b) < 50 ? "в расчёте" : b > 0 ? "должны" : "должен";
+    const label = !m.claimed ? "ещё не в боте" : Math.abs(b) < 50 ? "в расчёте" : b > 0 ? "должны" : "должен";
     return (
-      <div className="pcard">
-        <div className="av" style={{ background: p.color }}>{p.name[0]}</div>
+      <div className={"pcard" + (m.claimed ? "" : " ghost")}>
+        <div className="av" style={{ background: m.color }}>{(m.name || "?")[0]}</div>
         <div className="pcard-info">
-          <div className="pcard-name">{p.name}{isMe &&
-            <span style={{ color: "var(--text-3)", fontWeight: 500 }}> · Вы</span>}</div>
-          <div className={"pcard-bal " + cls}>
-            {label}{Math.abs(b) >= 50 && <> <span className="num">{S.fmt(Math.abs(b))}</span></>}
+          <div className="pcard-name">{m.name}
+            {m.isMe && <span style={{ color: "var(--text-3)", fontWeight: 500 }}> · Вы</span>}
+            {!m.claimed && <span className="ghost-tag"><Ic.ghost /></span>}
+          </div>
+          <div className={"pcard-bal " + (m.claimed ? cls : "zero")}>
+            {label}{m.claimed && Math.abs(b) >= 50 && <> <span className="num">{S.fmt(Math.abs(b))}</span></>}
           </div>
         </div>
       </div>
@@ -474,26 +660,23 @@ function App({ me, initial, dark, setDark, onLogout }) {
 
   const FeedItem = ({ e, idx }) => {
     const cat = window.CATEGORIES.find((c) => c.id === e.category) || window.CATEGORIES[0];
-    const Icn = cat.icon, hue = cat.hue;
+    const Icn = cat.icon, hue = cat.hue, mine = e.author === meMid;
     return (
       <div className="fitem" style={{ animationDelay: idx * 0.03 + "s" }}>
         <div className="fcat" style={{
           background: `color-mix(in oklch, oklch(0.6 0.14 ${hue}) 15%, var(--surface))`,
-          color: `oklch(0.56 0.15 ${hue})` }}>
-          <Icn />
-        </div>
+          color: `oklch(0.56 0.15 ${hue})` }}><Icn /></div>
         <div className="finfo">
           <div className="ftitle">{e.title}</div>
           <div className="fmeta">
             <span>платил {names[e.payer] || "?"}</span>
-            <span className="sepd" />
-            <span>{splitCount(e)} {pluralPeople(splitCount(e))}</span>
+            <span className="sepd" /><span>{splitCount(e)} {pluralPeople(splitCount(e))}</span>
           </div>
         </div>
         <div className="fright">
           <div className="famt num">{S.fmt(Math.round(e.amount * 100))}</div>
-          <button className="fact" onClick={() => openEdit(e)} aria-label="Изменить"><Ic.edit /></button>
-          <button className="fact del" onClick={() => onDelete(e.id)} aria-label="Удалить"><Ic.trash /></button>
+          {mine && <button className="fact" onClick={() => openEdit(e)} aria-label="Изменить"><Ic.edit /></button>}
+          {mine && <button className="fact del" onClick={() => onDelete(e.id)} aria-label="Удалить"><Ic.trash /></button>}
         </div>
       </div>
     );
@@ -515,31 +698,25 @@ function App({ me, initial, dark, setDark, onLogout }) {
         <button className={mode === "min" ? "on" : ""} onClick={() => setMode("min")}>Минимум переводов</button>
       </div>
       {allSettled ? (
-        <div className="empty settled">
-          <div className="empty-emoji">🎉</div>
+        <div className="empty settled"><div className="empty-emoji">🎉</div>
           <div className="empty-t">Все в расчёте</div>
-          <div className="empty-d">Никто никому не должен. Красота.</div>
-        </div>
+          <div className="empty-d">Никто никому не должен. Красота.</div></div>
       ) : (
         <div className="tlist">
           {transfers.map((tr, i) => (
             <div className="trow" key={i} style={{ animationDelay: i * 0.04 + "s" }}>
               <div className="tparty">
-                <div className="av" style={{ background: colorOf(tr.from) }}>{(names[tr.from] || "?")[0]}</div>
-                {names[tr.from]}
+                <div className="av" style={{ background: colorOf(tr.from) }}>{(names[tr.from] || "?")[0]}</div>{names[tr.from]}
               </div>
               <div className="tarrow"><Ic.arrow /></div>
               <div className="tparty">
-                <div className="av" style={{ background: colorOf(tr.to) }}>{(names[tr.to] || "?")[0]}</div>
-                {names[tr.to]}
+                <div className="av" style={{ background: colorOf(tr.to) }}>{(names[tr.to] || "?")[0]}</div>{names[tr.to]}
               </div>
               <div className="tamt num">{S.fmt(tr.amount)}</div>
             </div>
           ))}
           <div className="tcopy-hint">
-            {mode === "min"
-              ? `Меньше всего переводов — ${transfers.length} ${pluralTransfer(transfers.length)}`
-              : "Прямые долги по каждой паре"}
+            {mode === "min" ? `Меньше всего переводов — ${transfers.length} ${pluralTransfer(transfers.length)}` : "Прямые долги по каждой паре"}
           </div>
         </div>
       )}
@@ -550,46 +727,38 @@ function App({ me, initial, dark, setDark, onLogout }) {
     <div className="app">
       <header className="hdr">
         <div className="hdr-top">
-          <div className="brand"><div className="brand-mark">₽</div>{APP_NAME}</div>
+          <div className="brand">
+            <button className="icon-btn" onClick={onBack} aria-label="К группам" style={{ width: 34, height: 34 }}><Ic.back /></button>
+            <span className="brand-name">{groupMeta.name}</span>
+          </div>
           <div className="hdr-actions">
-            <span className="me-chip">
-              <span className="av" style={{ background: colorOf(me.id), width: 26, height: 26, fontSize: 11 }}>{me.name[0]}</span>
-              <span className="me-name">{me.name}</span>
-            </span>
             <button className="icon-btn ntf-btn" onClick={openNotifs} aria-label="Уведомления">
               <Ic.bell />{unread > 0 && <span className="ntf-badge">{unread > 9 ? "9+" : unread}</span>}
             </button>
-            <button className="icon-btn" onClick={() => setDark((v) => !v)} aria-label="Тема">
-              {dark ? <Ic.sun /> : <Ic.moon />}
-            </button>
-            <button className="icon-btn" onClick={onLogout} aria-label="Выйти"><Ic.logout /></button>
+            <button className="icon-btn" onClick={() => setSettings(true)} aria-label="Настройки"><Ic.gear /></button>
+            <button className="icon-btn" onClick={() => setDark((v) => !v)} aria-label="Тема">{dark ? <Ic.sun /> : <Ic.moon />}</button>
             <button className="btn-primary show-desktop" onClick={openNew}><Ic.plus /> Новая трата</button>
           </div>
         </div>
       </header>
 
-      {/* Личный баланс */}
       <div className="card card-pad" style={{ marginTop: "var(--gap-lg)" }}>
         <div className="psum">
-          <div className="psum-cell">
-            <div className="psum-lbl">Вам должны</div>
-            <div className="psum-amt pos num">{S.fmt(breakdown.totalOwedToMe)}</div>
-          </div>
+          <div className="psum-cell"><div className="psum-lbl">Вам должны</div>
+            <div className="psum-amt pos num">{S.fmt(breakdown.totalOwedToMe)}</div></div>
           <div className="psum-div" />
-          <div className="psum-cell">
-            <div className="psum-lbl">Вы должны</div>
-            <div className="psum-amt neg num">{S.fmt(breakdown.totalIOwe)}</div>
-          </div>
+          <div className="psum-cell"><div className="psum-lbl">Вы должны</div>
+            <div className="psum-amt neg num">{S.fmt(breakdown.totalIOwe)}</div></div>
         </div>
         <div className="bd">
           <BalanceSection title="Кто вам должен" total={breakdown.totalOwedToMe} dir="owed"
             entries={breakdown.owedToMe} colorOf={colorOf} emptyText="Пока никто вам не должен" />
           <BalanceSection title="Кому должны вы" total={breakdown.totalIOwe} dir="owe"
-            entries={breakdown.iOwe} colorOf={colorOf} emptyText="Вы никому не должны" onPay={openPay} />
+            entries={breakdown.iOwe} colorOf={colorOf} emptyText="Вы никому не должны" onPay={openPay} payInfo={payInfo} />
         </div>
         <div className="summary-sub" style={{ marginTop: 14 }}>
           <span className="chip">Потрачено вместе&nbsp;<span className="num">{S.fmt(totalSpent)}</span></span>
-          <span className="chip">{users.length} {pluralPeople(users.length)}</span>
+          <span className="chip">{members.length} {pluralPeople(members.length)}</span>
         </div>
       </div>
 
@@ -598,10 +767,9 @@ function App({ me, initial, dark, setDark, onLogout }) {
           <div className="col">
             <div className="card card-pad">
               <div className="card-h"><span className="card-title">Граф расчётов · вы в центре</span></div>
-              <SettlementGraph participants={users} balances={balances}
-                paid={paid} transfers={transfers} names={names} hubId={me.id} />
-              <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 8,
-                fontSize: 12, color: "var(--text-2)", fontWeight: 600 }}>
+              <SettlementGraph participants={members} balances={balances} paid={paid}
+                transfers={transfers} names={names} hubId={meMid} />
+              <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 8, fontSize: 12, color: "var(--text-2)", fontWeight: 600 }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <i style={{ width: 9, height: 9, borderRadius: 9, background: "var(--pos)" }} />в плюсе</span>
                 <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -610,13 +778,14 @@ function App({ me, initial, dark, setDark, onLogout }) {
             </div>
             {TransfersCard}
           </div>
-
           <div className="col">
             <div className="card card-pad">
-              <div className="card-h"><span className="card-title">Участники</span></div>
-              <div className="pgrid">
-                {users.map((p) => <PartCard key={p.id} p={p} />)}
+              <div className="card-h"><span className="card-title">Участники</span>
+                <button className="lnk-btn" onClick={copyInvite}>
+                  {invCopied ? <><Ic.check /> Ссылка скопирована</> : <><Ic.link /> Пригласить</>}
+                </button>
               </div>
+              <div className="pgrid">{members.map((m) => <PartCard key={m.id} m={m} />)}</div>
             </div>
             <div className="card card-pad">
               <div className="card-h"><span className="card-title">Траты</span>
@@ -631,16 +800,14 @@ function App({ me, initial, dark, setDark, onLogout }) {
                     <div className="fdate-group">{bucket.key}</div>
                     {bucket.items.map((e, i) => <FeedItem key={e.id} e={e} idx={i} />)}
                   </React.Fragment>
-                )) : <div className="bd-empty" style={{ padding: "16px 4px" }}>
-                  {feedMine ? "Нет трат с вашим участием" : "Трат пока нет"}</div>}
+                )) : <div className="bd-empty" style={{ padding: "16px 4px" }}>{feedMine ? "Нет трат с вашим участием" : "Трат пока нет"}</div>}
               </div>
             </div>
           </div>
         </div>
       ) : (
         <div className="card card-pad" style={{ marginTop: "var(--gap-lg)" }}>
-          <div className="empty">
-            <div className="empty-emoji">🧾</div>
+          <div className="empty"><div className="empty-emoji">🧾</div>
             <div className="empty-t">Пока нет трат</div>
             <div className="empty-d">Добавьте первую трату — и мы сразу посчитаем, кто кому сколько должен.</div>
             <button className="btn-primary" style={{ marginTop: 14 }} onClick={openNew}><Ic.plus /> Добавить трату</button>
@@ -651,11 +818,13 @@ function App({ me, initial, dark, setDark, onLogout }) {
       <button className="fab hide-desktop" onClick={openNew} aria-label="Новая трата"><Ic.plus /></button>
 
       <NewExpenseSheet open={sheetOpen} onClose={() => { setSheetOpen(false); setEditing(null); }}
-        onSave={onSave} participants={users} editing={editing} defaultPayer={me.id} />
+        onSave={onSave} participants={members} editing={editing} defaultPayer={meMid} />
       <PaymentDialog open={!!payTo} peer={payTo || {}} defaultAmount={payTo ? payTo.amount : 0}
         onClose={() => setPayTo(null)} onConfirm={confirmPay} />
       <NotificationsPanel open={notifOpen} notifications={notifications} paymentsById={paymentsById}
         onClose={() => setNotifOpen(false)} onConfirm={confirmReceipt} onDispute={disputeReceipt} />
+      <SettingsSheet open={settings} initial={{ name: (members.find((m) => m.isMe) || {}).name || meUser.name, payPhone: meUser.payPhone, payBank: meUser.payBank }}
+        onClose={() => setSettings(false)} onSave={saveSettings} />
     </div>
   );
 }
@@ -664,28 +833,43 @@ function App({ me, initial, dark, setDark, onLogout }) {
 function Root() {
   const [dark, setDark] = useTheme();
   const [me, setMe] = useState(null);
-  const [data, setData] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [group, setGroup] = useState(null);
   const [ready, setReady] = useState(false);
 
-  async function loadState() {
-    const d = await api("/state");
-    setMe(d.me); setData(d);
+  async function loadGroups() {
+    const d = await api("/groups");
+    setMe(d.user); setGroups(d.groups);
+    return d;
+  }
+  async function handleJoinParam() {
+    const code = new URLSearchParams(location.search).get("join");
+    if (!code) return false;
+    try {
+      const d = await api("/groups/join", { method: "POST", body: { code } });
+      history.replaceState({}, "", location.pathname);
+      setGroup(d); return true;
+    } catch (e) { history.replaceState({}, "", location.pathname); return false; }
   }
   useEffect(() => {
     (async () => {
-      if (tok.get()) { try { await loadState(); } catch (e) { tok.set(null); } }
+      if (tok.get()) {
+        try { await loadGroups(); await handleJoinParam(); } catch (e) { tok.set(null); }
+      }
       setReady(true);
     })();
   }, []);
 
-  function logout() {
-    api("/logout", { method: "POST" }).catch(() => {});
-    tok.set(null); setMe(null); setData(null);
-  }
+  async function openGroup(gid) { setGroup(await api("/groups/" + gid)); }
+  async function afterAuth() { await loadGroups(); await handleJoinParam(); }
+  function logout() { api("/auth/logout", { method: "POST" }).catch(() => {}); tok.set(null); setMe(null); setGroups([]); setGroup(null); }
+  async function backToGroups() { setGroup(null); await loadGroups(); }
 
   if (!ready) return <div className="boot">Загрузка…</div>;
-  if (!me) return <AuthScreen onAuthed={loadState} dark={dark} setDark={setDark} />;
-  return <App me={me} initial={data} dark={dark} setDark={setDark} onLogout={logout} />;
+  if (!me) return <AuthScreen onAuthed={afterAuth} dark={dark} setDark={setDark} />;
+  if (!group) return <GroupsScreen me={me} groups={groups} dark={dark} setDark={setDark}
+    onOpen={openGroup} onCreated={(d) => setGroup(d)} onLogout={logout} reload={loadGroups} />;
+  return <GroupView key={group.group.id} initial={group} dark={dark} setDark={setDark} onBack={backToGroups} />;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
