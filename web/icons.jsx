@@ -43,6 +43,11 @@ Ic.copy = (p) => svg(<>
 </>, p);
 Ic.check = (p) => svg(<><path d="M5 12.5 10 17l9-10" /></>, p);
 Ic.arrow = (p) => svg(<><path d="M5 12h13M13 6l6 6-6 6" /></>, p);
+Ic.chevron = (p) => svg(<><path d="M9 6l6 6-6 6" /></>, p);
+Ic.help = (p) => svg(<>
+  <circle cx="12" cy="12" r="9" />
+  <path d="M9.2 9.3a2.8 2.8 0 0 1 5.4 1c0 1.9-2.6 2.3-2.6 3.7" /><circle cx="12" cy="17" r=".6" fill="currentColor" />
+</>, p);
 Ic.sun = (p) => svg(<>
   <circle cx="12" cy="12" r="4" />
   <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M19 5l-1.4 1.4M6.4 17.6 5 19" />

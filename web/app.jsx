@@ -331,11 +331,14 @@ function SettingsSheet({ open, initial, onClose, onSave, group }) {
   const [phone, setPhone] = useState("");
   const [bank, setBank] = useState("");
   const [busy, setBusy] = useState(false);
+  const [help, setHelp] = useState(false);
   useEffect(() => {
-    if (open) { setName(initial.name || ""); setPhone(initial.payPhone || ""); setBank(initial.payBank || ""); setBusy(false); }
+    if (open) { setName(initial.name || ""); setPhone(initial.payPhone || ""); setBank(initial.payBank || ""); setBusy(false); setHelp(false); }
   }, [open]);
   if (!open) return null;
   return (
+    <React.Fragment>
+    <HelpSheet open={help} isCreator={group && group.isCreator} onClose={() => setHelp(false)} />
     <div className="scrim" onClick={onClose}>
       <div className="sheet" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
         <div className="sheet-grab" />
@@ -357,6 +360,9 @@ function SettingsSheet({ open, initial, onClose, onSave, group }) {
             <input className="input" value={bank} onChange={(e) => setBank(e.target.value)} placeholder="Например, Тинькофф" />
           </div>
           <p className="hint">Номер и банк видят те, кто должен вам — чтобы знать, куда перевести.</p>
+          <button className="help-btn" onClick={() => setHelp(true)}>
+            <Ic.help /> <span>Как пользоваться</span><span className="help-chev"><Ic.chevron /></span>
+          </button>
           {group && (
             <div className="danger">
               <div className="danger-h">Группа «{group.name}»</div>
@@ -370,6 +376,77 @@ function SettingsSheet({ open, initial, onClose, onSave, group }) {
             onClick={async () => { setBusy(true); try { await onSave({ name: name.trim(), payPhone: phone.trim(), payBank: bank.trim() }); } finally { setBusy(false); } }}>
             Сохранить
           </button>
+        </div>
+      </div>
+    </div>
+    </React.Fragment>
+  );
+}
+
+// ───────────────────────── FAQ «Как пользоваться» ─────────────────────────
+const FAQ_COMMON = [
+  ["Что это за приложение?",
+   "«Стажки в расчёте» помогают компании друзей вести общие траты. Вы заносите, кто за что платил, а приложение само считает, кто кому и сколько должен — минимальным числом переводов."],
+  ["Как занести трату?",
+   "Нажмите «＋ Трата». Укажите сумму, кто платил, за что и как делить: поровну (отметьте, между кем), долями или точными суммами. По умолчанию не выбран никто — отметьте участников. Себя как плательщика можно ставить всегда."],
+  ["Как понять, кто кому должен?",
+   "В шапке группы — ваш личный итог: сколько должны вы и сколько должны вам. Переключатель «минимально / по операциям» меняет способ: минимально — самый короткий путь рассчитаться по всей группе; по операциям — отдельный долг по каждой паре."],
+  ["Что значит «призрак»?",
+   "Это участник, которого вписали по @нику, но он ещё не открыл бота. За призрака уже можно заносить траты. Как только он напишет боту и займёт своё место — все его траты и долги станут его."],
+  ["Как пригласить человека?",
+   "В разделе участников — кнопка «Пригласить»: отправьте ссылку. Перейдя по ней, человек попадёт в группу и (если он был призраком) займёт своё место. Кто может приглашать — настраивается создателем при создании группы."],
+  ["Я перевёл деньги — что делать?",
+   "Нажмите «Перевести» рядом с тем, кому должны, укажите сумму. Если в группе включён режим «после подтверждения», долг уменьшится, когда получатель подтвердит. Иначе — сразу, а получатель может оспорить."],
+  ["Как изменить своё имя или реквизиты?",
+   "Настройки (шестерёнка) → «Ваше имя», номер и банк. Реквизиты видят только те, кто должен вам — чтобы знать, куда перевести. Имя можно поменять и нажав карандаш на своей карточке участника."],
+  ["Кто видит, за что трата?",
+   "Название и категорию траты видят только её участники. Остальные видят лишь сумму и факт, что трата была. Создатель группы видит всё."],
+];
+const FAQ_ADMIN = [
+  ["Чем отличается создатель группы?",
+   "Создатель — администратор. Он видит все траты (включая «за что»), может редактировать и удалять любые операции, переименовывать и убирать участников, отменять переводы и удалять группу."],
+  ["Как переименовать любого участника?",
+   "Нажмите карандаш на карточке участника и введите новое имя. Так можно поправить имя призрака или любого члена группы."],
+  ["Как настроить права и режим переводов?",
+   "Эти настройки выбираются при создании группы: «кто может добавлять участников» (все / только вы) и «когда засчитывать перевод» (сразу / после подтверждения)."],
+  ["Зачем отменять перевод?",
+   "Если перевод занесли по ошибке или он не состоялся. Только создатель может отменить уже подтверждённый перевод — чтобы никто не «снял» долг без причины."],
+];
+
+function FaqItem({ q, a }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={"faq-item" + (open ? " open" : "")}>
+      <button className="faq-q" onClick={() => setOpen((o) => !o)}>
+        <span>{q}</span><span className="faq-chev"><Ic.chevron /></span>
+      </button>
+      {open && <div className="faq-a">{a}</div>}
+    </div>
+  );
+}
+
+function HelpSheet({ open, isCreator, onClose }) {
+  if (!open) return null;
+  return (
+    <div className="scrim" style={{ zIndex: 60 }} onClick={onClose}>
+      <div className="sheet" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-grab" />
+        <div className="sheet-h"><b>Как пользоваться</b>
+          <button className="icon-btn" onClick={onClose} aria-label="Закрыть"
+            style={{ width: 34, height: 34, boxShadow: "none", background: "var(--surface-2)" }}><Ic.close /></button>
+        </div>
+        <div className="sheet-body">
+          <div className="faq-list">
+            {FAQ_COMMON.map(([q, a], i) => <FaqItem key={i} q={q} a={a} />)}
+          </div>
+          {isCreator && (
+            <React.Fragment>
+              <div className="faq-sec">Для создателя группы</div>
+              <div className="faq-list">
+                {FAQ_ADMIN.map(([q, a], i) => <FaqItem key={i} q={q} a={a} />)}
+              </div>
+            </React.Fragment>
+          )}
         </div>
       </div>
     </div>
@@ -725,6 +802,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
   const [payTo, setPayTo] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [renameTarget, setRenameTarget] = useState(null);
 
   const meMid = useMemo(() => (members.find((m) => m.isMe) || {}).id || initial.myMemberId, [members]);
   const isCreator = meUser.id === groupMeta.createdBy;
@@ -899,8 +977,13 @@ function GroupView({ initial, dark, setDark, onBack }) {
               ? <div className={"pcard-bal " + (pos ? "pos" : "neg")}><span className="num">{S.fmtShort(Math.abs(b))}</span></div>
               : <div className="pcard-bal zero">в расчёте</div>}
         </div>
-        {isCreator && !m.isMe && (
-          <button className="pcard-x" aria-label="Убрать" onClick={(e) => { e.stopPropagation(); removeMember(m); }}><Ic.close /></button>
+        {(isCreator || m.isMe) && (
+          <div className="pcard-acts">
+            <button className="pcard-act" aria-label="Имя" onClick={(e) => { e.stopPropagation(); setRenameTarget(m); }}><Ic.edit /></button>
+            {isCreator && !m.isMe && (
+              <button className="pcard-act del" aria-label="Убрать" onClick={(e) => { e.stopPropagation(); removeMember(m); }}><Ic.close /></button>
+            )}
+          </div>
         )}
       </div>
     );
@@ -1118,6 +1201,51 @@ function GroupView({ initial, dark, setDark, onBack }) {
         onClose={() => setOpenExp(null)} onEdit={(e) => { setOpenExp(null); openEdit(e); }} onDelete={(e) => onDelete(e.id)} />
       <AddMemberSheet open={addOpen} gid={gid} onClose={() => setAddOpen(false)} onAdded={applyState}
         onShare={shareInvite} shared={invCopied} />
+      <RenameSheet open={!!renameTarget} member={renameTarget}
+        onClose={() => setRenameTarget(null)} onSaved={(d) => { applyState(d); setRenameTarget(null); }} />
+    </div>
+  );
+}
+
+// ───────────────────────── переименование участника ─────────────────────────
+function RenameSheet({ open, member, onClose, onSaved }) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    if (open && member) { setName(member.name || ""); setErr(""); setBusy(false); }
+  }, [open, member && member.id]);
+  if (!open || !member) return null;
+  async function save() {
+    const v = name.trim();
+    if (!v) { setErr("Имя не может быть пустым."); return; }
+    setBusy(true); setErr("");
+    try { onSaved(await api("/members/" + member.id, { method: "PUT", body: { name: v } })); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  }
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="sheet" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-grab" />
+        <div className="sheet-h">
+          <b>Имя участника</b>
+          <button className="icon-btn" onClick={onClose} aria-label="Закрыть"
+            style={{ width: 34, height: 34, boxShadow: "none", background: "var(--surface-2)" }}>
+            <Ic.close />
+          </button>
+        </div>
+        <div className="sheet-body">
+          <div className="field">
+            <div className="flabel">Как показывать{member.isMe ? " вас" : " участника"} в группе</div>
+            <input className="input" value={name} autoFocus maxLength={40}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") save(); }} />
+          </div>
+          {err && <div className="auth-err">{err}</div>}
+          <button className="btn-primary" style={{ width: "100%", justifyContent: "center", opacity: busy ? 0.5 : 1 }}
+            disabled={busy} onClick={save}>Сохранить</button>
+        </div>
+      </div>
     </div>
   );
 }

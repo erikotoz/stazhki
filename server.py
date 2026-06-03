@@ -526,7 +526,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-rules2"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v4-help"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
@@ -760,9 +760,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not mem:
             return self._err("Участник не найден.", 404)
         g = ex(conn, "SELECT * FROM groups WHERE id=?", (mem["group_id"],)).fetchone()
-        can = (mem["user_id"] == me["id"]) or (not mem["user_id"] and g and g["created_by"] == me["id"])
+        is_creator = g and g["created_by"] == me["id"]
+        can = (mem["user_id"] == me["id"]) or is_creator   # своё имя — каждый; любое — создатель
         if not can:
-            return self._err("Можно менять только своё имя.", 403)
+            return self._err("Менять имя участника может он сам или создатель группы.", 403)
         name = (d.get("name") or "").strip()
         if not name:
             return self._err("Имя не может быть пустым.")
