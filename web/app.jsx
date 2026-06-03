@@ -742,13 +742,17 @@ function GroupView({ initial, dark, setDark, onBack }) {
 
   const feedGroups = useMemo(() => {
     const items = [];
+    const ids = members.map((m) => m.id);
     if (feedTab === "mine") {
-      // мои траты (я платил) + мои переводы (кому отправил)
-      expenses.forEach((e) => { if (e.payer === meMid) items.push({ type: "expense", e, ts: dateTs(e.date), key: fmtDate(e.date) }); });
-      payments.forEach((p) => { if (p.from === meMid) { const iso = epochToISO(p.created); items.push({ type: "payment", p, ts: p.created || 0, key: fmtDate(iso) }); } });
+      // мои доли (сколько именно я потратил за себя) + мои переводы
+      expenses.forEach((e) => {
+        const share = (S.owedForExpense(e, ids) || {})[meMid] || 0;
+        if (share > 0) items.push({ type: "expense", e, amount: share, ts: dateTs(e.date), key: fmtDate(e.date) });
+      });
+      payments.forEach((p) => { if (p.from === meMid) { const iso = epochToISO(p.created); items.push({ type: "payment", p, amount: Math.round(p.amount * 100), ts: p.created || 0, key: fmtDate(iso) }); } });
     } else {
-      // со мной: только траты, в которых я участвовал
-      expenses.forEach((e) => { if (expenseInvolves(e, meMid)) items.push({ type: "expense", e, ts: dateTs(e.date), key: fmtDate(e.date) }); });
+      // со мной: траты, в которых я участвовал — полной суммой
+      expenses.forEach((e) => { if (expenseInvolves(e, meMid)) items.push({ type: "expense", e, amount: Math.round(e.amount * 100), ts: dateTs(e.date), key: fmtDate(e.date) }); });
     }
     items.sort((a, b) => b.ts - a.ts);
     const g = [];
@@ -758,7 +762,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
       bucket.items.push(it);
     });
     return g;
-  }, [expenses, payments, feedTab, meMid]);
+  }, [expenses, payments, feedTab, meMid, members]);
 
   const PartCard = ({ m }) => {
     const b = balances[m.id] || 0;
@@ -795,7 +799,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
             <div className="ftitle">Перевод → {names[p.to] || "?"}</div>
             <div className="fmeta"><span>{st}</span>{p.note && <><span className="sepd" /><span>{p.note}</span></>}</div>
           </div>
-          <div className="fright"><div className="famt num">{S.fmt(Math.round(p.amount * 100))}</div></div>
+          <div className="fright"><div className="famt num">{S.fmt(it.amount)}</div></div>
         </div>
       );
     }
@@ -810,12 +814,13 @@ function GroupView({ initial, dark, setDark, onBack }) {
         <div className="finfo">
           <div className="ftitle">{e.title || cat.label}</div>
           <div className="fmeta">
-            <span>платил {names[e.payer] || "?"}</span>
-            <span className="sepd" /><span>{splitCount(e)} {pluralPeople(splitCount(e))}</span>
+            {feedTab === "mine"
+              ? <><span>ваша доля из {S.fmt(Math.round(e.amount * 100))}</span><span className="sepd" /><span>платил {names[e.payer] || "?"}</span></>
+              : <><span>платил {names[e.payer] || "?"}</span><span className="sepd" /><span>{splitCount(e)} {pluralPeople(splitCount(e))}</span></>}
           </div>
         </div>
         <div className="fright">
-          <div className="famt num">{S.fmt(Math.round(e.amount * 100))}</div>
+          <div className="famt num">{S.fmt(it.amount)}</div>
           {mine && <button className="fact" onClick={(ev) => { ev.stopPropagation(); openEdit(e); }} aria-label="Изменить"><Ic.edit /></button>}
           {mine && <button className="fact del" onClick={(ev) => { ev.stopPropagation(); onDelete(e.id); }} aria-label="Удалить"><Ic.trash /></button>}
           <span className="fchev"><Ic.arrow /></span>

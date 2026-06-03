@@ -20,7 +20,7 @@ function NewExpenseSheet({ open, onClose, onSave, participants, editing, default
   const [category, setCategory] = useStateS("food");
   const [date, setDate] = useStateS(todayISO());
   const [mode, setMode] = useStateS("equal");
-  const [among, setAmong] = useStateS(new Set(ids));
+  const [among, setAmong] = useStateS(new Set());
   const [shares, setShares] = useStateS(Object.fromEntries(ids.map((i) => [i, 1])));
   const [exact, setExact] = useStateS(Object.fromEntries(ids.map((i) => [i, ""])));
 
@@ -44,7 +44,7 @@ function NewExpenseSheet({ open, onClose, onSave, participants, editing, default
     } else {
       setPayer(defaultPayer || ids[0]);
       setAmount(""); setTitle(""); setCategory("food"); setDate(todayISO());
-      setMode("equal"); setAmong(new Set(ids));
+      setMode("equal"); setAmong(new Set());   // по умолчанию — никто не выбран
       setShares(Object.fromEntries(ids.map((i) => [i, 1])));
       setExact(Object.fromEntries(ids.map((i) => [i, ""])));
     }
@@ -67,8 +67,7 @@ function NewExpenseSheet({ open, onClose, onSave, participants, editing, default
   function toggleAmong(id) {
     setAmong((prev) => {
       const n = new Set(prev);
-      n.has(id) ? n.delete(id) : n.add(id);
-      if (n.size === 0) n.add(id);
+      n.has(id) ? n.delete(id) : n.add(id);   // можно снять всех (тогда кнопка серая)
       return n;
     });
   }
