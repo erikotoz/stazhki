@@ -919,7 +919,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
           </div>
           <div className="fright">
             <div className={"famt num" + (disputed ? " struck" : "")}>{S.fmtShort(it.amount)}</div>
-            {(p.from === meMid || groupMeta.isCreator) && (
+            {(groupMeta.isCreator || (p.from === meMid && p.status !== "confirmed")) && (
               <button className="pcancel" onClick={() => cancelPayment(p.id)} aria-label="Отменить перевод"><Ic.trash /></button>
             )}
           </div>
@@ -1105,7 +1105,8 @@ function GroupView({ initial, dark, setDark, onBack }) {
       <button className="fab hide-desktop" onClick={openNew} aria-label="Новая трата"><Ic.plus /></button>
 
       <NewExpenseSheet open={sheetOpen} onClose={() => { setSheetOpen(false); setEditing(null); }}
-        onSave={onSave} participants={members} editing={editing} defaultPayer={meMid} />
+        onSave={onSave} participants={members} editing={editing} defaultPayer={meMid}
+        payers={groupMeta.isCreator ? members : members.filter((m) => m.id === meMid)} />
       <PaymentDialog open={!!payTo} peer={payTo || {}} defaultAmount={payTo ? payTo.amount : 0}
         onClose={() => setPayTo(null)} onConfirm={confirmPay} confirmMode={confirmMode} />
       <NotificationsPanel open={notifOpen} notifications={notifications} paymentsById={paymentsById}

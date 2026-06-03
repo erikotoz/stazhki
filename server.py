@@ -526,7 +526,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-cancelpay"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-rules2"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
@@ -845,6 +845,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         payer = d.get("payer")
         if amount <= 0 or not payer:
             return self._err("Нужны сумма и плательщик.")
+        grp = ex(conn, "SELECT created_by FROM groups WHERE id=?", (gid,)).fetchone()
+        if (not grp or grp["created_by"] != me["id"]) and payer != mm["id"]:
+            return self._err("Добавлять трату можно только от своего лица. (Создатель группы — от любого.)", 403)
         verr = validate_split(conn, gid, payer, amount, d.get("split"))
         if verr:
             return self._err(verr)
@@ -886,6 +889,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 amount = 0
             if amount <= 0 or not d.get("payer"):
                 return self._err("Нужны сумма и плательщик.")
+            if not is_creator:
+                mm = my_member(conn, e["group_id"], me["id"])
+                if not mm or d.get("payer") != mm["id"]:
+                    return self._err("Трата может быть только от своего лица. (Создатель группы — от любого.)", 403)
             verr = validate_split(conn, e["group_id"], d.get("payer"), amount, d.get("split"))
             if verr:
                 return self._err(verr)
@@ -950,8 +957,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         from_mem = ex(conn, "SELECT user_id FROM members WHERE id=?", (p["from_member"],)).fetchone()
         grp = ex(conn, "SELECT created_by FROM groups WHERE id=?", (p["group_id"],)).fetchone()
         is_creator = grp and grp["created_by"] == me["id"]
-        if not ((from_mem and from_mem["user_id"] == me["id"]) or is_creator):
-            return self._err("Отменить перевод может тот, кто его отметил, или создатель группы.", 403)
+        is_sender = from_mem and from_mem["user_id"] == me["id"]
+        # подтверждённый перевод (получатель признал) отменяет только создатель;
+        # отправитель — только пока не подтверждён.
+        if not (is_creator or (is_sender and p["status"] != "confirmed")):
+            return self._err("Подтверждённый перевод может отменить только создатель группы.", 403)
         ex(conn, "DELETE FROM payments WHERE id=?", (pid,))
         return self._json(group_state(conn, p["group_id"], me["id"]) | {"me": user_public(me)})
 

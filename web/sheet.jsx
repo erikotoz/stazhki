@@ -10,9 +10,10 @@ function parseAmount(s) {
   return isNaN(n) ? 0 : n;
 }
 
-function NewExpenseSheet({ open, onClose, onSave, participants, editing, defaultPayer }) {
+function NewExpenseSheet({ open, onClose, onSave, participants, editing, defaultPayer, payers }) {
   const ids = participants.map((p) => p.id);
   const byId = Object.fromEntries(participants.map((p) => [p.id, p]));
+  const payerList = payers && payers.length ? payers : participants;   // от своего лица (если ограничено)
 
   const [payer, setPayer] = useStateS(defaultPayer || ids[0]);
   const [amount, setAmount] = useStateS("");
@@ -123,9 +124,9 @@ function NewExpenseSheet({ open, onClose, onSave, participants, editing, default
 
           {/* Payer */}
           <div className="field">
-            <div className="flabel">Кто платил</div>
+            <div className="flabel">Кто платил{payerList.length === 1 ? " · только от своего лица" : ""}</div>
             <div className="payer-row">
-              {participants.map((p) => (
+              {payerList.map((p) => (
                 <div key={p.id} className={"payer-opt" + (payer === p.id ? " on" : "")}
                   onClick={() => setPayer(p.id)}>
                   <div className="av" style={{ background: p.color }}>{p.name[0]}</div>
