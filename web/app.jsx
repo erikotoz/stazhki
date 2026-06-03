@@ -184,15 +184,18 @@ function DebtorRow({ entry, dir, colorOf, onPay, payInfo }) {
   const amt = dir === "owed" ? entry.net : -entry.net;
   const pi = payInfo && payInfo[entry.id];
   const hasReq = pi && (pi.payPhone || pi.payBank);
+  // раскрытие имеет смысл, если есть «за что» или есть что сделать (перевести)
+  const expandable = (entry.items && entry.items.length) || dir === "owe";
   return (
     <div className="pd">
-      <button className={"pd-head" + (open ? " open" : "")} onClick={() => setOpen((o) => !o)}>
+      <button className={"pd-head" + (open ? " open" : "")} disabled={!expandable}
+        style={expandable ? undefined : { cursor: "default" }} onClick={() => expandable && setOpen((o) => !o)}>
         <div className="av" style={{ background: colorOf(entry.id), width: 30, height: 30, fontSize: 12.5 }}>
           {(entry.name || "?")[0]}
         </div>
         <span className="pd-name">{entry.name}</span>
         <span className={"pd-amt num " + (dir === "owed" ? "pos" : "neg")}>{S.fmt(amt)}</span>
-        <span className="pd-chev"><Ic.arrow /></span>
+        {expandable && <span className="pd-chev"><Ic.arrow /></span>}
       </button>
       {open && (
         <div className="pd-items">
@@ -758,8 +761,14 @@ function GroupView({ initial, dark, setDark, onBack }) {
     [mode, balances, members, expenses, activePayments]);
   const totalSpent = useMemo(() => expenses.reduce((a, e) => a + Math.round(e.amount * 100), 0), [expenses]);
   const allSettled = transfers.length === 0 && expenses.length > 0;
-  const breakdown = useMemo(() => personalBreakdown(meMid, members, expenses, activePayments),
-    [meMid, members, expenses, activePayments]);
+  // Личный список следует режиму «минимум / по парам» (общий с «Кто кому скидывает»).
+  // По парам — с разбивкой «за что»; минимум — кому реально перевести (без «за что»).
+  const breakdown = useMemo(() => {
+    if (mode === "pairs") return personalBreakdown(meMid, members, expenses, activePayments);
+    const owedToMe = transfers.filter((t) => t.to === meMid).map((t) => ({ id: t.from, name: names[t.from] || "?", net: t.amount, items: [] }));
+    const iOwe = transfers.filter((t) => t.from === meMid).map((t) => ({ id: t.to, name: names[t.to] || "?", net: -t.amount, items: [] }));
+    return { owedToMe, iOwe, totalOwedToMe: owedToMe.reduce((a, e) => a + e.net, 0), totalIOwe: iOwe.reduce((a, e) => a - e.net, 0) };
+  }, [mode, meMid, members, expenses, activePayments, transfers, names]);
 
   function openNew() { setEditing(null); setSheetOpen(true); }
   function openEdit(exp) { setEditing(exp); setSheetOpen(true); }
@@ -1038,6 +1047,10 @@ function GroupView({ initial, dark, setDark, onBack }) {
           <div className="psum-div" />
           <div className="psum-cell"><div className="psum-lbl">Вы должны</div>
             <div className="psum-amt neg num">{S.fmt(breakdown.totalIOwe)}</div></div>
+        </div>
+        <div className="seg" style={{ display: "flex", width: "100%", margin: "10px 0 4px" }}>
+          <button className={mode === "min" ? "on" : ""} onClick={() => setMode("min")}>Минимум переводов</button>
+          <button className={mode === "pairs" ? "on" : ""} onClick={() => setMode("pairs")}>По парам</button>
         </div>
         <div className="bd">
           <BalanceSection title="Кто вам должен" total={breakdown.totalOwedToMe} dir="owed"
