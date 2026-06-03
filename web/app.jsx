@@ -162,7 +162,7 @@ function BreakdownItem({ it }) {
           <div className="pd-ititle">{it.sent ? "Перевод — вы отправили" : "Перевод — вам отправили"}</div>
           <div className="pd-istatus">{stTxt}</div>
         </div>
-        <span className={"pd-iamt num " + (pos ? "pos" : "neg")}>{(pos ? "+" : "−") + S.fmt(Math.abs(it.c))}</span>
+        <span className={"pd-iamt num " + (pos ? "pos" : "neg")}>{(pos ? "+" : "−") + S.fmtShort(Math.abs(it.c))}</span>
       </div>
     );
   }
@@ -173,7 +173,7 @@ function BreakdownItem({ it }) {
       <div className="pd-cat" style={{ color: `oklch(0.56 0.15 ${cat.hue})` }}><Icn /></div>
       <span className="pd-ititle">{it.exp.title || cat.label}</span>
       <span className="pd-idate">{fmtDate(it.exp.date)}</span>
-      <span className={"pd-iamt num " + (pos ? "pos" : "neg")}>{(pos ? "+" : "−") + S.fmt(Math.abs(it.c))}</span>
+      <span className={"pd-iamt num " + (pos ? "pos" : "neg")}>{(pos ? "+" : "−") + S.fmtShort(Math.abs(it.c))}</span>
     </div>
   );
 }
@@ -194,7 +194,7 @@ function DebtorRow({ entry, dir, colorOf, onPay, payInfo }) {
           {(entry.name || "?")[0]}
         </div>
         <span className="pd-name">{entry.name}</span>
-        <span className={"pd-amt num " + (dir === "owed" ? "pos" : "neg")}>{S.fmt(amt)}</span>
+        <span className={"pd-amt num " + (dir === "owed" ? "pos" : "neg")}>{S.fmtShort(amt)}</span>
         {expandable && <span className="pd-chev"><Ic.arrow /></span>}
       </button>
       {open && (
@@ -230,7 +230,7 @@ function BalanceSection({ title, total, dir, entries, colorOf, emptyText, onPay,
     <div className="bd-sec">
       <button className={"bd-head" + (open ? " open" : "")} onClick={() => setOpen((o) => !o)}>
         <span className="bd-lbl">{title}</span>
-        <span className={"bd-total num " + (dir === "owed" ? "pos" : "neg")}>{S.fmt(total)}</span>
+        <span className={"bd-total num " + (dir === "owed" ? "pos" : "neg")}>{S.fmtShort(total)}</span>
         <span className="bd-chev"><Ic.arrow /></span>
       </button>
       {open && (entries.length ? (
@@ -891,7 +891,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
           {!m.claimed
             ? <div className="pcard-bal zero">ещё не в боте</div>
             : (pos || neg)
-              ? <div className={"pcard-bal " + (pos ? "pos" : "neg")}><span className="num">{S.fmt(Math.abs(b))}</span></div>
+              ? <div className={"pcard-bal " + (pos ? "pos" : "neg")}><span className="num">{S.fmtShort(Math.abs(b))}</span></div>
               : <div className="pcard-bal zero">в расчёте</div>}
         </div>
         {isCreator && !m.isMe && (
@@ -912,7 +912,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
             <div className="ftitle">Перевод → {names[p.to] || "?"}</div>
             <div className="fmeta"><span className={disputed ? "neg" : ""}>{st}</span>{p.note && <><span className="sepd" /><span>{p.note}</span></>}</div>
           </div>
-          <div className="fright"><div className={"famt num" + (disputed ? " struck" : "")}>{S.fmt(it.amount)}</div></div>
+          <div className="fright"><div className={"famt num" + (disputed ? " struck" : "")}>{S.fmtShort(it.amount)}</div></div>
         </div>
       );
     }
@@ -928,11 +928,11 @@ function GroupView({ initial, dark, setDark, onBack }) {
           <div className="ftitle">{e.title || cat.label}</div>
           <div className="fmeta">
             {feedTab === "mine"
-              ? <><span>ваша доля из {S.fmt(Math.round(e.amount * 100))}</span><span className="sepd" /><span>платил {names[e.payer] || "?"}</span></>
+              ? <><span>ваша доля из {S.fmtShort(Math.round(e.amount * 100))}</span><span className="sepd" /><span>платил {names[e.payer] || "?"}</span></>
               : <><span>платил {names[e.payer] || "?"}</span><span className="sepd" /><span>{splitCount(e)} {pluralPeople(splitCount(e))}</span></>}
           </div>
         </div>
-        <div className="fright"><div className="famt num">{S.fmt(it.amount)}</div></div>
+        <div className="fright"><div className="famt num">{S.fmtShort(it.amount)}</div></div>
       </div>
     );
   };
@@ -967,7 +967,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
               <div className="tparty">
                 <div className="av" style={{ background: colorOf(tr.to) }}>{(names[tr.to] || "?")[0]}</div>{names[tr.to]}
               </div>
-              <div className="tamt num">{S.fmt(tr.amount)}</div>
+              <div className="tamt num">{S.fmtShort(tr.amount)}</div>
             </div>
           ))}
           <div className="tcopy-hint">
@@ -1043,10 +1043,10 @@ function GroupView({ initial, dark, setDark, onBack }) {
       <div className="card card-pad" style={{ marginTop: "var(--gap-lg)" }}>
         <div className="psum">
           <div className="psum-cell"><div className="psum-lbl">Вам должны</div>
-            <div className="psum-amt pos num">{S.fmt(breakdown.totalOwedToMe)}</div></div>
+            <div className="psum-amt pos num">{S.fmtShort(breakdown.totalOwedToMe)}</div></div>
           <div className="psum-div" />
           <div className="psum-cell"><div className="psum-lbl">Вы должны</div>
-            <div className="psum-amt neg num">{S.fmt(breakdown.totalIOwe)}</div></div>
+            <div className="psum-amt neg num">{S.fmtShort(breakdown.totalIOwe)}</div></div>
         </div>
         <div className="seg" style={{ display: "flex", width: "100%", margin: "10px 0 4px" }}>
           <button className={mode === "min" ? "on" : ""} onClick={() => setMode("min")}>Минимум переводов</button>
@@ -1059,7 +1059,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
             entries={breakdown.iOwe} colorOf={colorOf} emptyText="Вы никому не должны" onPay={openPay} payInfo={payInfo} />
         </div>
         <div className="summary-sub" style={{ marginTop: 14 }}>
-          <span className="chip">Потрачено вместе&nbsp;<span className="num">{S.fmt(totalSpent)}</span></span>
+          <span className="chip">Потрачено вместе&nbsp;<span className="num">{S.fmtShort(totalSpent)}</span></span>
           <span className="chip">{members.length} {pluralPeople(members.length)}</span>
         </div>
       </div>

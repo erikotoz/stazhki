@@ -461,6 +461,15 @@ input,select{font-family:inherit;color:inherit}
 .show-more{width:100%;margin-top:10px;padding:10px;border-radius:11px;background:var(--surface-2);border:.5px solid var(--line);
   color:var(--accent);font-weight:600;font-size:13.5px}
 .show-more:hover{background:var(--accent-soft-2)}
+
+/* ── Защита вёрстки от длинных чисел ── */
+.psum-amt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.pcard-bal{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tamt{white-space:nowrap;flex:0 0 auto;max-width:42%;overflow:hidden;text-overflow:ellipsis}
+.pd-amt,.bd-total{white-space:nowrap;flex:0 0 auto}
+.famt{white-space:nowrap}
+.ed-amt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.gcard-name{min-width:0}
 </style>
 </head>
 <body>

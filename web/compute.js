@@ -133,8 +133,25 @@
     return s;
   }
 
+  // Компактный формат для тесных мест: большие суммы -> «1,4 млн ₽», «2 млрд ₽».
+  // Обычные суммы (< 1 млн ₽) показываем полностью.
+  function fmtShort(kopecks) {
+    var rub = Math.abs(kopecks) / 100;
+    if (rub < 1e6) return fmt(kopecks);
+    var neg = kopecks < 0;
+    var units = [[1e12, "трлн"], [1e9, "млрд"], [1e6, "млн"]];
+    for (var i = 0; i < units.length; i++) {
+      if (rub >= units[i][0]) {
+        var n = rub / units[i][0];
+        var str = n >= 100 ? String(Math.round(n)) : n.toFixed(1).replace(/\.0$/, "").replace(".", ",");
+        return (neg ? "−" : "") + str + " " + units[i][1] + " ₽";
+      }
+    }
+    return fmt(kopecks);
+  }
+
   window.Settle = {
     owedForExpense, computeBalances, totalPaid,
-    minimalTransfers, pairwiseTransfers, fmt,
+    minimalTransfers, pairwiseTransfers, fmt, fmtShort,
   };
 })();

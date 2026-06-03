@@ -141,7 +141,7 @@ function SettlementGraph({ participants, balances, paid, transfers, names, hubId
           <div key={e.key}
             className={"edge-pill" + (edgeActive(e) ? "" : " dim")}
             style={{ left: (e.mid.x / VB) * 100 + "%", top: (e.mid.y / VB) * 100 + "%" }}>
-            {window.Settle.fmt(e.amount)}
+            {window.Settle.fmtShort(e.amount)}
           </div>
         ))}
       </div>
