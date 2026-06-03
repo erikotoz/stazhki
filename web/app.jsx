@@ -797,6 +797,10 @@ function GroupView({ initial, dark, setDark, onBack }) {
     try { applyState(await api("/groups/" + gid + "/payments", { method: "POST", body: { to: payTo.id, amount } })); setPayTo(null); }
     catch (ex) { alert(ex.message); }
   }
+  async function cancelPayment(pid) {
+    if (!confirm("Отменить этот перевод? Он перестанет учитываться, долг вернётся к расчёту.")) return;
+    try { applyState(await api("/payments/" + pid, { method: "DELETE" })); } catch (ex) { alert(ex.message); }
+  }
   async function openNotifs() {
     setNotifOpen(true);
     try { await api("/notifications/read", { method: "POST" }); setNotifications((ns) => ns.map((n) => ({ ...n, read: true }))); } catch (e) {}
@@ -859,8 +863,9 @@ function GroupView({ initial, dark, setDark, onBack }) {
       });
       payments.forEach((p) => { if (p.from === meMid) { const iso = epochToISO(p.created); items.push({ type: "payment", p, amount: Math.round(p.amount * 100), ts: p.created || 0, key: fmtDate(iso) }); } });
     } else if (feedTab === "all") {
-      // все траты группы (для создателя-админа)
+      // все траты и переводы группы (для создателя-админа)
       expenses.forEach((e) => items.push({ type: "expense", e, amount: Math.round(e.amount * 100), ts: dateTs(e.date), key: fmtDate(e.date) }));
+      payments.forEach((p) => { const iso = epochToISO(p.created); items.push({ type: "payment", p, amount: Math.round(p.amount * 100), ts: p.created || 0, key: fmtDate(iso) }); });
     } else {
       // со мной: траты, в которых я участвовал — полной суммой
       expenses.forEach((e) => { if (expenseInvolves(e, meMid)) items.push({ type: "expense", e, amount: Math.round(e.amount * 100), ts: dateTs(e.date), key: fmtDate(e.date) }); });
@@ -912,7 +917,12 @@ function GroupView({ initial, dark, setDark, onBack }) {
             <div className="ftitle">Перевод → {names[p.to] || "?"}</div>
             <div className="fmeta"><span className={disputed ? "neg" : ""}>{st}</span>{p.note && <><span className="sepd" /><span>{p.note}</span></>}</div>
           </div>
-          <div className="fright"><div className={"famt num" + (disputed ? " struck" : "")}>{S.fmtShort(it.amount)}</div></div>
+          <div className="fright">
+            <div className={"famt num" + (disputed ? " struck" : "")}>{S.fmtShort(it.amount)}</div>
+            {(p.from === meMid || groupMeta.isCreator) && (
+              <button className="pcancel" onClick={() => cancelPayment(p.id)} aria-label="Отменить перевод"><Ic.trash /></button>
+            )}
+          </div>
         </div>
       );
     }

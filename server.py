@@ -526,7 +526,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-bignum"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-cancelpay"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
@@ -625,6 +625,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.match(r"^/api/payments/([\w\-]+)/(confirm|dispute)$", path)
             if m and method == "POST":
                 return self._resolve_payment(conn, me, m.group(1), m.group(2))
+
+            m = re.match(r"^/api/payments/([\w\-]+)$", path)
+            if m and method == "DELETE":
+                return self._delete_payment(conn, me, m.group(1))
 
             m = re.match(r"^/api/members/([\w\-]+)$", path)
             if m and method == "PUT":
@@ -937,6 +941,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             notify(conn, from_mem["user_id"], p["group_id"], "payment_disputed",
                    "%s не получил(а) перевод %s — долг вернулся" % (to_mem["display_name"], fmt_rub(p["amount"])), {})
+        return self._json(group_state(conn, p["group_id"], me["id"]) | {"me": user_public(me)})
+
+    def _delete_payment(self, conn, me, pid):
+        p = ex(conn, "SELECT * FROM payments WHERE id=?", (pid,)).fetchone()
+        if not p:
+            return self._err("Перевод не найден.", 404)
+        from_mem = ex(conn, "SELECT user_id FROM members WHERE id=?", (p["from_member"],)).fetchone()
+        grp = ex(conn, "SELECT created_by FROM groups WHERE id=?", (p["group_id"],)).fetchone()
+        is_creator = grp and grp["created_by"] == me["id"]
+        if not ((from_mem and from_mem["user_id"] == me["id"]) or is_creator):
+            return self._err("Отменить перевод может тот, кто его отметил, или создатель группы.", 403)
+        ex(conn, "DELETE FROM payments WHERE id=?", (pid,))
         return self._json(group_state(conn, p["group_id"], me["id"]) | {"me": user_public(me)})
 
     # ---- Telegram webhook: /start → кнопка запуска мини-аппы ----
