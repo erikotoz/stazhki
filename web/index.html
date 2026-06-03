@@ -452,6 +452,15 @@ input,select{font-family:inherit;color:inherit}
 .det-btn:hover{background:var(--surface-3)}
 .det-btn.del{color:var(--neg)}
 .det-btn.del:hover{background:var(--neg-tint)}
+
+/* ── Сворачиваемые карточки + «показать все» ── */
+.coll-h{user-select:none}
+.coll-chev{color:var(--text-3);transition:transform .2s;display:grid;place-items:center}
+.coll-chev.ml-auto{margin-left:auto}
+.coll-chev.open{transform:rotate(90deg)}
+.show-more{width:100%;margin-top:10px;padding:10px;border-radius:11px;background:var(--surface-2);border:.5px solid var(--line);
+  color:var(--accent);font-weight:600;font-size:13.5px}
+.show-more:hover{background:var(--accent-soft-2)}
 </style>
 </head>
 <body>

@@ -685,6 +685,21 @@ function ExpenseDetail({ open, exp, members, meMid, names, onClose, onEdit, onDe
   );
 }
 
+// ───────────────────────── сворачиваемая карточка ─────────────────────────
+function Collapsible({ title, action, defaultOpen, children }) {
+  const [open, setOpen] = useState(defaultOpen !== false);
+  return (
+    <div className="card card-pad">
+      <div className="card-h coll-h" style={{ marginBottom: open ? undefined : 0, cursor: "pointer" }} onClick={() => setOpen((o) => !o)}>
+        <span className="card-title">{title}</span>
+        {action && <span style={{ marginLeft: "auto" }} onClick={(e) => e.stopPropagation()}>{action}</span>}
+        <span className={"coll-chev" + (open ? " open" : "") + (action ? "" : " ml-auto")}><Ic.arrow /></span>
+      </div>
+      {open && children}
+    </div>
+  );
+}
+
 function GroupView({ initial, dark, setDark, onBack }) {
   const groupMeta = initial.group;
   const gid = groupMeta.id;
@@ -702,6 +717,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
   const [addOpen, setAddOpen] = useState(false);
   const [ghostHint, setGhostHint] = useState(false);
   const [feedTab, setFeedTab] = useState("withme");   // withme | mine
+  const [feedExpanded, setFeedExpanded] = useState(false);
   const [openExp, setOpenExp] = useState(null);
   const [payTo, setPayTo] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -823,7 +839,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
     try { await api("/groups/" + gid, { method: "DELETE" }); onBack(); } catch (ex) { alert(ex.message); }
   }
 
-  const feedGroups = useMemo(() => {
+  const feed = useMemo(() => {
     const items = [];
     const ids = members.map((m) => m.id);
     if (feedTab === "mine") {
@@ -838,14 +854,16 @@ function GroupView({ initial, dark, setDark, onBack }) {
       expenses.forEach((e) => { if (expenseInvolves(e, meMid)) items.push({ type: "expense", e, amount: Math.round(e.amount * 100), ts: dateTs(e.date), key: fmtDate(e.date) }); });
     }
     items.sort((a, b) => b.ts - a.ts);
+    const total = items.length;
+    const shown = feedExpanded ? items : items.slice(0, 5);
     const g = [];
-    items.forEach((it) => {
+    shown.forEach((it) => {
       let bucket = g.find((x) => x.key === it.key);
       if (!bucket) { bucket = { key: it.key, items: [] }; g.push(bucket); }
       bucket.items.push(it);
     });
-    return g;
-  }, [expenses, payments, feedTab, meMid, members]);
+    return { groups: g, total };
+  }, [expenses, payments, feedTab, meMid, members, feedExpanded]);
 
   const PartCard = ({ m }) => {
     const b = balances[m.id] || 0;
@@ -949,26 +967,22 @@ function GroupView({ initial, dark, setDark, onBack }) {
   );
 
   const ParticipantsCard = (
-    <div className="card card-pad">
-      <div className="card-h"><span className="card-title">Участники</span>
-        {groupMeta.canInvite && (
-          <button className="lnk-btn" onClick={() => setAddOpen(true)}><Ic.plus /> Добавить</button>
-        )}
-      </div>
+    <Collapsible title="Участники" defaultOpen={true}
+      action={groupMeta.canInvite ? <button className="lnk-btn" onClick={() => setAddOpen(true)}><Ic.plus /> Добавить</button> : null}>
       <div className="pgrid">{members.map((m) => <PartCard key={m.id} m={m} />)}</div>
-    </div>
+    </Collapsible>
   );
 
   const FeedCard = (
     <div className="card card-pad">
       <div className="card-h"><span className="card-title">Траты</span>
         <div className="seg" style={{ marginLeft: "auto" }}>
-          <button className={feedTab === "withme" ? "on" : ""} onClick={() => setFeedTab("withme")}>Со мной</button>
-          <button className={feedTab === "mine" ? "on" : ""} onClick={() => setFeedTab("mine")}>Мои</button>
+          <button className={feedTab === "withme" ? "on" : ""} onClick={() => { setFeedTab("withme"); setFeedExpanded(false); }}>Со мной</button>
+          <button className={feedTab === "mine" ? "on" : ""} onClick={() => { setFeedTab("mine"); setFeedExpanded(false); }}>Мои</button>
         </div>
       </div>
       <div className="feed">
-        {feedGroups.length ? feedGroups.map((bucket) => (
+        {feed.groups.length ? feed.groups.map((bucket) => (
           <React.Fragment key={bucket.key}>
             <div className="fdate-group">{bucket.key}</div>
             {bucket.items.map((it, i) => <FeedRow key={(it.e || it.p).id} it={it} idx={i} />)}
@@ -976,9 +990,11 @@ function GroupView({ initial, dark, setDark, onBack }) {
         )) : <div className="bd-empty" style={{ padding: "16px 4px" }}>
           {feedTab === "mine" ? "Вы пока ничего не платили и не переводили" : "Трат с вашим участием пока нет"}</div>}
       </div>
-      <p className="hint" style={{ marginTop: 6 }}>
-        {feedTab === "withme" ? "Здесь только траты, где вы участвовали. Нажмите на трату — увидите доли." : "Что вы оплатили и кому переводили."}
-      </p>
+      {feed.total > 5 && (
+        <button className="show-more" onClick={() => setFeedExpanded((x) => !x)}>
+          {feedExpanded ? "Свернуть" : `Показать все · ${feed.total}`}
+        </button>
+      )}
     </div>
   );
 
@@ -1034,35 +1050,28 @@ function GroupView({ initial, dark, setDark, onBack }) {
       {hasExpenses ? (
         <div className="grid">
           <div className="col">
-            <div className="card card-pad">
-              <div className="card-h"><span className="card-title">Граф расчётов · вы в центре</span></div>
+            <Collapsible title="Граф расчётов · вы в центре" defaultOpen={true}>
               <SettlementGraph participants={members} balances={balances} paid={paid}
                 transfers={transfers} names={names} hubId={meMid} />
-              <div style={{ display: "flex", justifyContent: "center", gap: 16, marginTop: 8, fontSize: 12, color: "var(--text-2)", fontWeight: 600 }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <i style={{ width: 9, height: 9, borderRadius: 9, background: "var(--pos)" }} />в плюсе</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <i style={{ width: 9, height: 9, borderRadius: 9, background: "var(--neg)" }} />в минусе</span>
-              </div>
-            </div>
+            </Collapsible>
             {TransfersCard}
           </div>
           <div className="col">
-            {ParticipantsCard}
             {FeedCard}
+            {ParticipantsCard}
           </div>
         </div>
       ) : (
         <div style={{ marginTop: "var(--gap-lg)" }}>
-          {ParticipantsCard}
           <div className="card card-pad">
             <div className="empty"><div className="empty-emoji">🧾</div>
               <div className="empty-t">Пока нет трат</div>
               <div className="empty-d">Добавьте первую трату — и мы сразу посчитаем, кто кому сколько должен.
-                А чтобы позвать друзей — кнопка «Пригласить» выше.</div>
+                А участников можно добавить в блоке «Участники» ниже.</div>
               <button className="btn-primary" style={{ marginTop: 14 }} onClick={openNew}><Ic.plus /> Добавить трату</button>
             </div>
           </div>
+          {ParticipantsCard}
         </div>
       )}
 
