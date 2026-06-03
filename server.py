@@ -16,7 +16,7 @@
   • в облаке:  задан DATABASE_URL           → Postgres; задан BOT_TOKEN → вход только через Telegram.
 """
 
-import os, json, re, time, hmac, hashlib, secrets, sqlite3
+import os, json, re, time, hmac, hashlib, secrets, sqlite3, threading
 from urllib.parse import urlparse, parse_qs, parse_qsl
 import urllib.request
 import http.server, socketserver
@@ -219,6 +219,92 @@ def expense_involves_member(e, mid):
     return mid in (sp.get("among") or [])   # equal (по умолчанию)
 
 
+def _owed_for_expense(e):
+    """Доли по трате -> {member_id: копейки}."""
+    out = {}
+    total = round((e.get("amount") or 0) * 100)
+    sp = e.get("split") or {}
+    mode = sp.get("mode", "equal")
+    if mode == "shares":
+        sh = {k: v for k, v in (sp.get("shares") or {}).items() if v and v > 0}
+        s = sum(sh.values()) or 1
+        items = list(sh.items()); assigned = 0
+        for i, (k, v) in enumerate(items):
+            c = (total - assigned) if i == len(items) - 1 else round(total * v / s)
+            out[k] = c; assigned += c
+    elif mode == "exact":
+        for k, v in (sp.get("exact") or {}).items():
+            out[k] = round((v or 0) * 100)
+    else:
+        among = sp.get("among") or []
+        if among:
+            base = total // len(among); rem = total - base * len(among)
+            for i, k in enumerate(among):
+                out[k] = base + (1 if i < rem else 0)
+    return out
+
+
+def fmt_k(kop):
+    """Копейки -> «1 200 ₽»."""
+    neg = kop < 0; kop = abs(int(round(kop)))
+    rub = kop // 100; k = kop % 100
+    s = "{:,}".format(rub).replace(",", " ")
+    if k:
+        s += ",%02d" % k
+    return ("−" if neg else "") + s + " ₽"
+
+
+def personal_totals(conn, gid, mid):
+    """(вам должны, вы должны) для участника mid в копейках — нетто по парам."""
+    if not mid:
+        return (0, 0)
+    exps = [expense_public(r) for r in ex(conn, "SELECT * FROM expenses WHERE group_id=?", (gid,)).fetchall()]
+    pays = [payment_public(r) for r in ex(conn, "SELECT * FROM payments WHERE group_id=? AND status!='disputed'", (gid,)).fetchall()]
+    per = {}
+    for e in exps:
+        owed = _owed_for_expense(e)
+        if e["payer"] == mid:
+            for pid, k in owed.items():
+                if pid != mid and k > 0:
+                    per[pid] = per.get(pid, 0) + k
+        elif owed.get(mid, 0) > 0:
+            per[e["payer"]] = per.get(e["payer"], 0) - owed[mid]
+    for p in pays:
+        k = round(p["amount"] * 100)
+        if p["from"] == mid:
+            per[p["to"]] = per.get(p["to"], 0) + k
+        elif p["to"] == mid:
+            per[p["from"]] = per.get(p["from"], 0) - k
+    return (sum(v for v in per.values() if v > 0), sum(-v for v in per.values() if v < 0))
+
+
+def member_chat_id(conn, member_id):
+    r = ex(conn, "SELECT u.tg_id AS tg FROM members m JOIN users u ON u.id=m.user_id WHERE m.id=?", (member_id,)).fetchone()
+    return r["tg"] if r and r["tg"] else None
+
+
+def tg_send(chat_id, text):
+    """Отправка сообщения пользователю ботом (в фоне, не тормозит ответ)."""
+    if not BOT_TOKEN or not chat_id:
+        return
+    threading.Thread(target=lambda: tg_api("sendMessage",
+        {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}), daemon=True).start()
+
+
+def unique_name(conn, gid, name, exclude=None):
+    """Уникальное отображаемое имя в группе (добавляет (2), (3)… при совпадении)."""
+    name = (name or "").strip() or "Участник"
+    taken = {r["display_name"] for r in
+             ex(conn, "SELECT id, display_name FROM members WHERE group_id=?", (gid,)).fetchall()
+             if r["id"] != exclude}
+    if name not in taken:
+        return name
+    i = 2
+    while ("%s (%d)" % (name, i)) in taken:
+        i += 1
+    return "%s (%d)" % (name, i)
+
+
 def group_state(conn, gid, me_id):
     g = ex(conn, "SELECT * FROM groups WHERE id=?", (gid,)).fetchone()
     if not g:
@@ -376,7 +462,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-pool"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-notify"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
@@ -429,6 +515,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
             if method == "POST" and path == "/api/groups/join":
                 return self._join_group(conn, me, self._body().get("code"))
+
+            if method == "POST" and path == "/api/groups/claim":
+                return self._claim_seat(conn, me, self._body())
 
             if method == "GET" and path == "/api/groups/preview":
                 code = (parse_qs(urlparse(self.path).query).get("code") or [""])[0]
@@ -511,6 +600,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         for mem in (d.get("members") or []):
             idx += 1
             dn = (mem.get("name") or "").strip() or (norm_username(mem.get("username")) or "Участник")
+            dn = unique_name(conn, gid, dn)
             ex(conn, "INSERT INTO members(id,group_id,display_name,claim_username,user_id,color,created) VALUES(?,?,?,?,?,?,?)",
                (uid("m"), gid, dn, norm_username(mem.get("username")), None,
                 "oklch(0.62 0.14 %d)" % HUES[idx % len(HUES)], time.time()))
@@ -529,15 +619,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._err("Группа не найдена.", 404)
         gid = g["id"]
         if not my_member(conn, gid, me["id"]):
-            # пробуем занять призрака по своему username
+            # пробуем занять призрака по своему @нику
             claim_ghosts(conn, me["id"], me["username"])
-            if not my_member(conn, gid, me["id"]):
-                # призрака с моим ником нет — создаём новое место
+        if my_member(conn, gid, me["id"]):
+            st = group_state(conn, gid, me["id"]); st["me"] = user_public(me)
+            return self._json(st)
+        # совпадения по нику нет — пусть человек сам выберет своё место
+        ghosts = [{"id": r["id"], "name": r["display_name"]} for r in
+                  ex(conn, "SELECT id, display_name FROM members WHERE group_id=? AND user_id IS NULL ORDER BY created", (gid,)).fetchall()]
+        return self._json({"needsClaim": True, "code": code,
+                           "group": {"id": gid, "name": g["name"]}, "ghosts": ghosts})
+
+    def _claim_seat(self, conn, me, d):
+        g = ex(conn, "SELECT * FROM groups WHERE invite_code=?", (d.get("code") or "",)).fetchone()
+        if not g:
+            return self._err("Группа не найдена.", 404)
+        gid = g["id"]
+        mid = d.get("memberId")
+        if not my_member(conn, gid, me["id"]):
+            if mid:   # занять выбранного призрака
+                ghost = ex(conn, "SELECT * FROM members WHERE id=? AND group_id=?", (mid, gid)).fetchone()
+                if not ghost or ghost["user_id"]:
+                    return self._err("Это место уже занято.", 409)
+                ex(conn, "UPDATE members SET user_id=?, claim_username=? WHERE id=?", (me["id"], me["username"], mid))
+            else:     # новое место
                 idx = ex(conn, "SELECT COUNT(*) AS c FROM members WHERE group_id=?", (gid,)).fetchone()["c"]
                 ex(conn, "INSERT INTO members(id,group_id,display_name,claim_username,user_id,color,created) VALUES(?,?,?,?,?,?,?)",
-                   (uid("m"), gid, me["name"], me["username"], me["id"], "oklch(0.62 0.14 %d)" % HUES[idx % len(HUES)], time.time()))
-        st = group_state(conn, gid, me["id"])
-        st["me"] = user_public(me)
+                   (uid("m"), gid, unique_name(conn, gid, me["name"]), me["username"], me["id"],
+                    "oklch(0.62 0.14 %d)" % HUES[idx % len(HUES)], time.time()))
+        st = group_state(conn, gid, me["id"]); st["me"] = user_public(me)
         return self._json(st)
 
     def _rename_member(self, conn, me, mid, d):
@@ -551,6 +661,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         name = (d.get("name") or "").strip()
         if not name:
             return self._err("Имя не может быть пустым.")
+        taken = {r["display_name"] for r in
+                 ex(conn, "SELECT id, display_name FROM members WHERE group_id=?", (mem["group_id"],)).fetchall()
+                 if r["id"] != mid}
+        if name in taken:
+            return self._err("Такое имя уже занято в группе.", 409)
         ex(conn, "UPDATE members SET display_name=? WHERE id=?", (name, mid))
         # если переименовал себя — обновим и глобальное имя
         if mem["user_id"] == me["id"]:
@@ -630,6 +745,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
            (uid("e"), gid, payer, amount, d.get("title") or "", d.get("category") or "other",
             d.get("date") or time.strftime("%Y-%m-%d"),
             json.dumps(d.get("split") or {"mode": "equal"}, ensure_ascii=False), mm["id"], time.time()))
+        # уведомить в Телеграме тех, кто теперь должен (кроме плательщика и автора)
+        shares = _owed_for_expense({"amount": amount, "payer": payer, "split": d.get("split") or {"mode": "equal"}})
+        pr = ex(conn, "SELECT display_name FROM members WHERE id=?", (payer,)).fetchone()
+        payer_name = pr["display_name"] if pr else "?"
+        title = d.get("title") or "трата"
+        for pid, k in shares.items():
+            if pid == payer or pid == mm["id"] or k <= 0:
+                continue
+            chat = member_chat_id(conn, pid)
+            if chat:
+                o, i = personal_totals(conn, gid, pid)
+                tg_send(chat, "🧾 Новая трата «%s»\n%s заплатил(а) %s, ваша доля — %s.\n\nВам должны: %s\nВы должны: %s"
+                        % (title, payer_name, fmt_k(round(amount * 100)), fmt_k(k), fmt_k(o), fmt_k(i)))
         return self._json(group_state(conn, gid, me["id"]) | {"me": user_public(me)})
 
     def _mutate_expense(self, conn, me, eid, method, d):
@@ -675,6 +803,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         notify(conn, to_mem["user_id"], gid, "payment_recorded",
                "%s отметил(а) перевод %s вам" % (mm["display_name"], fmt_rub(amount)),
                {"amount": amount, "paymentId": pid})
+        chat = member_chat_id(conn, to)
+        if chat:
+            o, i = personal_totals(conn, gid, to)
+            tg_send(chat, "💸 %s отметил(а) перевод %s вам.\nПодтвердите получение в приложении.\n\nВам должны: %s\nВы должны: %s"
+                    % (mm["display_name"], fmt_k(round(amount * 100)), fmt_k(o), fmt_k(i)))
         return self._json(group_state(conn, gid, me["id"]) | {"me": user_public(me)})
 
     def _resolve_payment(self, conn, me, pid, action):

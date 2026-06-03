@@ -990,12 +990,54 @@ function GroupView({ initial, dark, setDark, onBack }) {
   );
 }
 
+// ───────────────────────── выбор своего места в группе ─────────────────────────
+function ClaimScreen({ claim, dark, setDark, onDone, onBack }) {
+  const [busy, setBusy] = useState(false);
+  async function pick(memberId) {
+    setBusy(true);
+    try { onDone(await api("/groups/claim", { method: "POST", body: { code: claim.code, memberId } })); }
+    catch (e) { alert(e.message); setBusy(false); }
+  }
+  return (
+    <div className="app">
+      <header className="hdr">
+        <div className="hdr-top">
+          <div className="brand">
+            <button className="icon-btn" onClick={onBack} aria-label="Назад" style={{ width: 34, height: 34 }}><Ic.back /></button>
+            <span className="brand-name">Вход в группу</span>
+          </div>
+          <div className="hdr-actions">
+            <button className="icon-btn" onClick={() => setDark((v) => !v)} aria-label="Тема">{dark ? <Ic.sun /> : <Ic.moon />}</button>
+          </div>
+        </div>
+      </header>
+      <div className="card card-pad" style={{ marginTop: "var(--gap-lg)" }}>
+        <div className="card-h"><span className="card-title">Группа «{claim.group.name}»</span></div>
+        <p className="hint" style={{ marginTop: 0 }}>Мы не нашли ваше место по @нику. Выберите, кто вы — или создайте новое место.</p>
+        <div className="glist" style={{ marginTop: 6 }}>
+          {claim.ghosts.map((g) => (
+            <button className="gcard" key={g.id} disabled={busy} onClick={() => pick(g.id)}>
+              <div className="gcard-mark">{(g.name || "?")[0]}</div>
+              <div className="gcard-info"><div className="gcard-name">{g.name}</div><div className="gcard-sub">занять это место</div></div>
+              <Ic.arrow />
+            </button>
+          ))}
+          {!claim.ghosts.length && <div className="bd-empty">Свободных мест нет — создайте новое.</div>}
+        </div>
+        <button className="btn-primary" style={{ width: "100%", justifyContent: "center", marginTop: 14 }}
+          disabled={busy} onClick={() => pick(null)}>Меня тут нет — я новый участник</button>
+      </div>
+    </div>
+  );
+}
+
 // ───────────────────────── корень ─────────────────────────
 function Root() {
   const [dark, setDark] = useTheme();
   const [me, setMe] = useState(null);
   const [groups, setGroups] = useState([]);
   const [group, setGroup] = useState(null);
+  const [claim, setClaim] = useState(null);   // выбор своего места (ghost) при входе
   const [ready, setReady] = useState(false);
   const [authErr, setAuthErr] = useState("");
 
@@ -1014,7 +1056,7 @@ function Root() {
     if (!code) return;
     try {
       const d = await api("/groups/join", { method: "POST", body: { code } });
-      setGroup(d);
+      if (d && d.needsClaim) setClaim(d); else setGroup(d);
     } catch (e) {}
     history.replaceState({}, "", location.pathname);
   }
@@ -1052,8 +1094,10 @@ function Root() {
     }
     return <AuthScreen onAuthed={afterAuth} dark={dark} setDark={setDark} />;
   }
+  if (claim) return <ClaimScreen claim={claim} dark={dark} setDark={setDark}
+    onDone={(state) => { setClaim(null); setGroup(state); }} onBack={() => setClaim(null)} />;
   if (!group) return <GroupsScreen me={me} groups={groups} dark={dark} setDark={setDark}
-    onOpen={openGroup} onCreated={(d) => setGroup(d)} onLogout={logout} reload={loadGroups} />;
+    onOpen={openGroup} onCreated={(d) => (d && d.needsClaim ? setClaim(d) : setGroup(d))} onLogout={logout} reload={loadGroups} />;
   return <GroupView key={group.group.id} initial={group} dark={dark} setDark={setDark} onBack={backToGroups} />;
 }
 
