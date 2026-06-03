@@ -76,6 +76,8 @@ function parseAmount(s) {
   const n = parseFloat(String(s).replace(",", ".").replace(/\s/g, ""));
   return isNaN(n) ? 0 : n;
 }
+function epochToISO(epoch) { return new Date((epoch || 0) * 1000).toISOString().slice(0, 10); }
+function dateTs(iso) { return new Date((iso || "1970-01-01") + "T00:00:00").getTime() / 1000; }
 function expenseInvolves(exp, id) {
   if (exp.payer === id) return true;
   const sp = exp.split || {};
@@ -567,6 +569,47 @@ function GroupsScreen({ me, groups, dark, setDark, onOpen, onCreated, onLogout, 
 }
 
 // ───────────────────────── группа ─────────────────────────
+// ───────────────────────── деталь траты (кликабельно) ─────────────────────────
+function ExpenseDetail({ open, exp, members, meMid, names, onClose }) {
+  if (!open || !exp) return null;
+  const ids = members.map((m) => m.id);
+  const shares = S.owedForExpense(exp, ids);
+  const cat = (window.CATEGORIES.find((c) => c.id === exp.category)) || window.CATEGORIES[0];
+  const Icn = cat.icon;
+  const rows = members.filter((m) => (shares[m.id] || 0) > 0);
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="sheet" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-grab" />
+        <div className="sheet-h"><b>{exp.title || cat.label}</b>
+          <button className="icon-btn" onClick={onClose} aria-label="Закрыть"
+            style={{ width: 34, height: 34, boxShadow: "none", background: "var(--surface-2)" }}><Ic.close /></button>
+        </div>
+        <div className="sheet-body">
+          <div className="ed-top">
+            <div className="fcat" style={{ background: `color-mix(in oklch, oklch(0.6 0.14 ${cat.hue}) 15%, var(--surface))`, color: `oklch(0.56 0.15 ${cat.hue})` }}><Icn /></div>
+            <div style={{ minWidth: 0 }}>
+              <div className="ed-amt num">{S.fmt(Math.round(exp.amount * 100))}</div>
+              <div className="ed-meta">платил <b>{names[exp.payer] || "?"}</b> · {fmtDate(exp.date)}</div>
+            </div>
+          </div>
+          <div className="flabel" style={{ marginTop: 4 }}>Кто сколько должен по этой трате</div>
+          <div className="ed-list">
+            {rows.map((m) => (
+              <div className="ed-row" key={m.id}>
+                <div className="av" style={{ background: m.color, width: 30, height: 30, fontSize: 12.5 }}>{(m.name || "?")[0]}</div>
+                <span className="ed-name">{m.name}{m.id === meMid && <span style={{ color: "var(--text-3)", fontWeight: 500 }}> · Вы</span>}{m.id === exp.payer && <span className="ed-paid">платил</span>}</span>
+                <span className="ed-share num">{S.fmt(shares[m.id])}</span>
+              </div>
+            ))}
+          </div>
+          <p className="hint">Это доли по конкретной трате. Долги считаются суммарно по всем тратам и переводам, поэтому отдельно «за эту трату» переводить не нужно — итог смотрите в «Кто кому скидывает».</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GroupView({ initial, dark, setDark, onBack }) {
   const groupMeta = initial.group;
   const gid = groupMeta.id;
@@ -581,7 +624,8 @@ function GroupView({ initial, dark, setDark, onBack }) {
   const [editing, setEditing] = useState(null);
   const [copied, setCopied] = useState(false);
   const [invCopied, setInvCopied] = useState(false);
-  const [feedMine, setFeedMine] = useState(false);
+  const [feedTab, setFeedTab] = useState("withme");   // withme | mine
+  const [openExp, setOpenExp] = useState(null);
   const [payTo, setPayTo] = useState(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [settings, setSettings] = useState(false);
@@ -696,19 +740,25 @@ function GroupView({ initial, dark, setDark, onBack }) {
     try { await api("/groups/" + gid, { method: "DELETE" }); onBack(); } catch (ex) { alert(ex.message); }
   }
 
-  const grouped = useMemo(() => {
-    let list = [...expenses];
-    if (feedMine) list = list.filter((e) => expenseInvolves(e, meMid));
-    list.sort((a, b) => (a.date < b.date ? 1 : -1));
+  const feedGroups = useMemo(() => {
+    const items = [];
+    if (feedTab === "mine") {
+      // мои траты (я платил) + мои переводы (кому отправил)
+      expenses.forEach((e) => { if (e.payer === meMid) items.push({ type: "expense", e, ts: dateTs(e.date), key: fmtDate(e.date) }); });
+      payments.forEach((p) => { if (p.from === meMid) { const iso = epochToISO(p.created); items.push({ type: "payment", p, ts: p.created || 0, key: fmtDate(iso) }); } });
+    } else {
+      // со мной: только траты, в которых я участвовал
+      expenses.forEach((e) => { if (expenseInvolves(e, meMid)) items.push({ type: "expense", e, ts: dateTs(e.date), key: fmtDate(e.date) }); });
+    }
+    items.sort((a, b) => b.ts - a.ts);
     const g = [];
-    list.forEach((e) => {
-      const key = fmtDate(e.date);
-      let bucket = g.find((x) => x.key === key);
-      if (!bucket) { bucket = { key, items: [] }; g.push(bucket); }
-      bucket.items.push(e);
+    items.forEach((it) => {
+      let bucket = g.find((x) => x.key === it.key);
+      if (!bucket) { bucket = { key: it.key, items: [] }; g.push(bucket); }
+      bucket.items.push(it);
     });
     return g;
-  }, [expenses, feedMine, meMid]);
+  }, [expenses, payments, feedTab, meMid]);
 
   const PartCard = ({ m }) => {
     const b = balances[m.id] || 0;
@@ -734,16 +784,31 @@ function GroupView({ initial, dark, setDark, onBack }) {
     );
   };
 
-  const FeedItem = ({ e, idx }) => {
+  const FeedRow = ({ it, idx }) => {
+    if (it.type === "payment") {
+      const p = it.p;
+      const st = p.status === "confirmed" ? "подтверждён" : p.status === "disputed" ? "оспорен" : "ждёт подтверждения";
+      return (
+        <div className="fitem" style={{ animationDelay: idx * 0.03 + "s" }}>
+          <div className="fcat" style={{ background: "var(--accent-soft-2)", color: "var(--accent)" }}><Ic.send /></div>
+          <div className="finfo">
+            <div className="ftitle">Перевод → {names[p.to] || "?"}</div>
+            <div className="fmeta"><span>{st}</span>{p.note && <><span className="sepd" /><span>{p.note}</span></>}</div>
+          </div>
+          <div className="fright"><div className="famt num">{S.fmt(Math.round(p.amount * 100))}</div></div>
+        </div>
+      );
+    }
+    const e = it.e;
     const cat = window.CATEGORIES.find((c) => c.id === e.category) || window.CATEGORIES[0];
     const Icn = cat.icon, hue = cat.hue, mine = e.author === meMid;
     return (
-      <div className="fitem" style={{ animationDelay: idx * 0.03 + "s" }}>
+      <div className="fitem clickable" style={{ animationDelay: idx * 0.03 + "s" }} onClick={() => setOpenExp(e)}>
         <div className="fcat" style={{
           background: `color-mix(in oklch, oklch(0.6 0.14 ${hue}) 15%, var(--surface))`,
           color: `oklch(0.56 0.15 ${hue})` }}><Icn /></div>
         <div className="finfo">
-          <div className="ftitle">{e.title}</div>
+          <div className="ftitle">{e.title || cat.label}</div>
           <div className="fmeta">
             <span>платил {names[e.payer] || "?"}</span>
             <span className="sepd" /><span>{splitCount(e)} {pluralPeople(splitCount(e))}</span>
@@ -751,8 +816,9 @@ function GroupView({ initial, dark, setDark, onBack }) {
         </div>
         <div className="fright">
           <div className="famt num">{S.fmt(Math.round(e.amount * 100))}</div>
-          {mine && <button className="fact" onClick={() => openEdit(e)} aria-label="Изменить"><Ic.edit /></button>}
-          {mine && <button className="fact del" onClick={() => onDelete(e.id)} aria-label="Удалить"><Ic.trash /></button>}
+          {mine && <button className="fact" onClick={(ev) => { ev.stopPropagation(); openEdit(e); }} aria-label="Изменить"><Ic.edit /></button>}
+          {mine && <button className="fact del" onClick={(ev) => { ev.stopPropagation(); onDelete(e.id); }} aria-label="Удалить"><Ic.trash /></button>}
+          <span className="fchev"><Ic.arrow /></span>
         </div>
       </div>
     );
@@ -814,18 +880,22 @@ function GroupView({ initial, dark, setDark, onBack }) {
     <div className="card card-pad">
       <div className="card-h"><span className="card-title">Траты</span>
         <div className="seg" style={{ marginLeft: "auto" }}>
-          <button className={feedMine ? "" : "on"} onClick={() => setFeedMine(false)}>Все</button>
-          <button className={feedMine ? "on" : ""} onClick={() => setFeedMine(true)}>Мои</button>
+          <button className={feedTab === "withme" ? "on" : ""} onClick={() => setFeedTab("withme")}>Со мной</button>
+          <button className={feedTab === "mine" ? "on" : ""} onClick={() => setFeedTab("mine")}>Мои</button>
         </div>
       </div>
       <div className="feed">
-        {grouped.length ? grouped.map((bucket) => (
+        {feedGroups.length ? feedGroups.map((bucket) => (
           <React.Fragment key={bucket.key}>
             <div className="fdate-group">{bucket.key}</div>
-            {bucket.items.map((e, i) => <FeedItem key={e.id} e={e} idx={i} />)}
+            {bucket.items.map((it, i) => <FeedRow key={(it.e || it.p).id} it={it} idx={i} />)}
           </React.Fragment>
-        )) : <div className="bd-empty" style={{ padding: "16px 4px" }}>{feedMine ? "Нет трат с вашим участием" : "Трат пока нет"}</div>}
+        )) : <div className="bd-empty" style={{ padding: "16px 4px" }}>
+          {feedTab === "mine" ? "Вы пока ничего не платили и не переводили" : "Трат с вашим участием пока нет"}</div>}
       </div>
+      <p className="hint" style={{ marginTop: 6 }}>
+        {feedTab === "withme" ? "Здесь только траты, где вы участвовали. Нажмите на трату — увидите доли." : "Что вы оплатили и кому переводили."}
+      </p>
     </div>
   );
 
@@ -914,6 +984,8 @@ function GroupView({ initial, dark, setDark, onBack }) {
       <SettingsSheet open={settings} initial={{ name: (members.find((m) => m.isMe) || {}).name || meUser.name, payPhone: meUser.payPhone, payBank: meUser.payBank }}
         onClose={() => setSettings(false)} onSave={saveSettings}
         group={{ name: groupMeta.name, isCreator, onLeave: leaveGroup, onDelete: deleteGroup }} />
+      <ExpenseDetail open={!!openExp} exp={openExp} members={members} meMid={meMid} names={names}
+        onClose={() => setOpenExp(null)} />
     </div>
   );
 }

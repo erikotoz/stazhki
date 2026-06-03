@@ -205,17 +205,43 @@ def my_member(conn, gid, me_id):
     return ex(conn, "SELECT * FROM members WHERE group_id=? AND user_id=?", (gid, me_id)).fetchone()
 
 
+def expense_involves_member(e, mid):
+    if not mid:
+        return False
+    if e["payer"] == mid:
+        return True
+    sp = e.get("split") or {}
+    mode = sp.get("mode")
+    if mode == "shares":
+        return (sp.get("shares") or {}).get(mid, 0) > 0
+    if mode == "exact":
+        return mid in (sp.get("exact") or {})
+    return mid in (sp.get("among") or [])   # equal (по умолчанию)
+
+
 def group_state(conn, gid, me_id):
     g = ex(conn, "SELECT * FROM groups WHERE id=?", (gid,)).fetchone()
     if not g:
         return None
     members = members_of(conn, gid, me_id)
+    mine = my_member(conn, gid, me_id)
+    my_mid = mine["id"] if mine else None
     expenses = [expense_public(r) for r in ex(conn, "SELECT * FROM expenses WHERE group_id=? ORDER BY date,created", (gid,)).fetchall()]
     payments = [payment_public(r) for r in ex(conn, "SELECT * FROM payments WHERE group_id=? ORDER BY created", (gid,)).fetchall()]
+    # Приватность: «за что» (название/категория/заметка) видит только участник траты/перевода.
+    # Суммы и «кто кому» остаются — чтобы корректно считались балансы и граф.
+    for e in expenses:
+        if not expense_involves_member(e, my_mid):
+            e["title"] = ""
+            e["category"] = "other"
+            e["hidden"] = True
+    for p in payments:
+        if my_mid not in (p["from"], p["to"]):
+            p["note"] = ""
+            p["hidden"] = True
     notifs = [notification_public(r) for r in ex(conn,
               "SELECT * FROM notifications WHERE user_id=? AND (group_id=? OR group_id IS NULL) ORDER BY created DESC LIMIT 50",
               (me_id, gid)).fetchall()]
-    mine = my_member(conn, gid, me_id)
     # реквизиты участников (для занятых мест)
     pay_rows = ex(conn, "SELECT m.id mid, u.pay_phone pp, u.pay_bank pb FROM members m "
                   "JOIN users u ON u.id=m.user_id WHERE m.group_id=?", (gid,)).fetchall()
