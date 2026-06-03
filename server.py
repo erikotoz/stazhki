@@ -367,15 +367,18 @@ def group_state(conn, gid, me_id):
     payments = [payment_public(r) for r in ex(conn, "SELECT * FROM payments WHERE group_id=? ORDER BY created", (gid,)).fetchall()]
     # Приватность: «за что» (название/категория/заметка) видит только участник траты/перевода.
     # Суммы и «кто кому» остаются — чтобы корректно считались балансы и граф.
-    for e in expenses:
-        if not expense_involves_member(e, my_mid):
-            e["title"] = ""
-            e["category"] = "other"
-            e["hidden"] = True
-    for p in payments:
-        if my_mid not in (p["from"], p["to"]):
-            p["note"] = ""
-            p["hidden"] = True
+    # Создатель группы — «админ»: видит все траты (для управления).
+    is_creator = (g["created_by"] == me_id)
+    if not is_creator:
+        for e in expenses:
+            if not expense_involves_member(e, my_mid):
+                e["title"] = ""
+                e["category"] = "other"
+                e["hidden"] = True
+        for p in payments:
+            if my_mid not in (p["from"], p["to"]):
+                p["note"] = ""
+                p["hidden"] = True
     notifs = [notification_public(r) for r in ex(conn,
               "SELECT * FROM notifications WHERE user_id=? AND (group_id=? OR group_id IS NULL) ORDER BY created DESC LIMIT 50",
               (me_id, gid)).fetchall()]
@@ -523,7 +526,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-collapse"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-admin"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
@@ -866,8 +869,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not e:
             return self._err("Трата не найдена.", 404)
         author = ex(conn, "SELECT * FROM members WHERE id=?", (e["author_member"],)).fetchone()
-        if not author or author["user_id"] != me["id"]:
-            return self._err("Менять/удалять можно только свои траты.", 403)
+        grp = ex(conn, "SELECT created_by FROM groups WHERE id=?", (e["group_id"],)).fetchone()
+        is_creator = grp and grp["created_by"] == me["id"]
+        if not ((author and author["user_id"] == me["id"]) or is_creator):
+            return self._err("Менять/удалять трату может её автор или создатель группы.", 403)
         if method == "DELETE":
             ex(conn, "DELETE FROM expenses WHERE id=?", (eid,))
         else:

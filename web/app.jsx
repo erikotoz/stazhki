@@ -636,14 +636,14 @@ function AddMemberSheet({ open, gid, onClose, onAdded, onShare, shared }) {
 }
 
 // ───────────────────────── деталь траты (кликабельно) ─────────────────────────
-function ExpenseDetail({ open, exp, members, meMid, names, onClose, onEdit, onDelete }) {
+function ExpenseDetail({ open, exp, members, meMid, names, onClose, onEdit, onDelete, isCreator }) {
   if (!open || !exp) return null;
   const ids = members.map((m) => m.id);
   const shares = S.owedForExpense(exp, ids);
   const cat = (window.CATEGORIES.find((c) => c.id === exp.category)) || window.CATEGORIES[0];
   const Icn = cat.icon;
   const rows = members.filter((m) => (shares[m.id] || 0) > 0);
-  const mine = exp.author === meMid;
+  const mine = exp.author === meMid || isCreator;
   return (
     <div className="scrim" onClick={onClose}>
       <div className="sheet" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
@@ -849,6 +849,9 @@ function GroupView({ initial, dark, setDark, onBack }) {
         if (share > 0) items.push({ type: "expense", e, amount: share, ts: dateTs(e.date), key: fmtDate(e.date) });
       });
       payments.forEach((p) => { if (p.from === meMid) { const iso = epochToISO(p.created); items.push({ type: "payment", p, amount: Math.round(p.amount * 100), ts: p.created || 0, key: fmtDate(iso) }); } });
+    } else if (feedTab === "all") {
+      // все траты группы (для создателя-админа)
+      expenses.forEach((e) => items.push({ type: "expense", e, amount: Math.round(e.amount * 100), ts: dateTs(e.date), key: fmtDate(e.date) }));
     } else {
       // со мной: траты, в которых я участвовал — полной суммой
       expenses.forEach((e) => { if (expenseInvolves(e, meMid)) items.push({ type: "expense", e, amount: Math.round(e.amount * 100), ts: dateTs(e.date), key: fmtDate(e.date) }); });
@@ -979,6 +982,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
         <div className="seg" style={{ marginLeft: "auto" }}>
           <button className={feedTab === "withme" ? "on" : ""} onClick={() => { setFeedTab("withme"); setFeedExpanded(false); }}>Со мной</button>
           <button className={feedTab === "mine" ? "on" : ""} onClick={() => { setFeedTab("mine"); setFeedExpanded(false); }}>Мои</button>
+          {groupMeta.isCreator && <button className={feedTab === "all" ? "on" : ""} onClick={() => { setFeedTab("all"); setFeedExpanded(false); }}>Все</button>}
         </div>
       </div>
       <div className="feed">
@@ -988,7 +992,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
             {bucket.items.map((it, i) => <FeedRow key={(it.e || it.p).id} it={it} idx={i} />)}
           </React.Fragment>
         )) : <div className="bd-empty" style={{ padding: "16px 4px" }}>
-          {feedTab === "mine" ? "Вы пока ничего не платили и не переводили" : "Трат с вашим участием пока нет"}</div>}
+          {feedTab === "mine" ? "Вы пока ничего не платили и не переводили" : feedTab === "all" ? "Трат в группе пока нет" : "Трат с вашим участием пока нет"}</div>}
       </div>
       {feed.total > 5 && (
         <button className="show-more" onClick={() => setFeedExpanded((x) => !x)}>
@@ -1086,7 +1090,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
       <SettingsSheet open={settings} initial={{ name: (members.find((m) => m.isMe) || {}).name || meUser.name, payPhone: meUser.payPhone, payBank: meUser.payBank }}
         onClose={() => setSettings(false)} onSave={saveSettings}
         group={{ name: groupMeta.name, isCreator, onLeave: leaveGroup, onDelete: deleteGroup }} />
-      <ExpenseDetail open={!!openExp} exp={openExp} members={members} meMid={meMid} names={names}
+      <ExpenseDetail open={!!openExp} exp={openExp} members={members} meMid={meMid} names={names} isCreator={groupMeta.isCreator}
         onClose={() => setOpenExp(null)} onEdit={(e) => { setOpenExp(null); openEdit(e); }} onDelete={(e) => onDelete(e.id)} />
       <AddMemberSheet open={addOpen} gid={gid} onClose={() => setAddOpen(false)} onAdded={applyState}
         onShare={shareInvite} shared={invCopied} />
