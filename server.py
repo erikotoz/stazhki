@@ -36,6 +36,17 @@ APP_URL = (os.environ.get("APP_URL") or os.environ.get("RENDER_EXTERNAL_URL") or
 if USE_PG:
     import psycopg
     from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+    # Пул соединений: открываем один раз и переиспользуем — без этого каждый
+    # запрос тратил бы ~секунды на установку соединения с Supabase.
+    PG_POOL = ConnectionPool(
+        DATABASE_URL, min_size=1, max_size=8, timeout=15,
+        max_idle=300, max_lifetime=1800,
+        check=ConnectionPool.check_connection,
+        kwargs={"row_factory": dict_row, "autocommit": True, "prepare_threshold": None},
+        open=False,
+    )
+    PG_POOL.open()
 
 HUES = [262, 214, 304, 188, 338, 28, 152, 48, 95, 240, 12, 200, 330, 70]
 MIME = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
@@ -50,12 +61,19 @@ def q(sql):
 
 def get_conn():
     if USE_PG:
-        return psycopg.connect(DATABASE_URL, row_factory=dict_row, autocommit=True, prepare_threshold=None)
+        return PG_POOL.getconn()
     conn = sqlite3.connect(DB_PATH, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def release(conn):
+    if USE_PG:
+        PG_POOL.putconn(conn)
+    else:
+        conn.close()
 
 
 def ex(conn, sql, params=()):
@@ -118,7 +136,7 @@ def init_db():
         for s in SCHEMA:
             ex(conn, s)
     finally:
-        conn.close()
+        release(conn)
 
 
 def uid(p):  # короткий id с префиксом
@@ -332,7 +350,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-migrate"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-pool"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
@@ -439,7 +457,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             return self._err("Ошибка сервера: %s" % e, 500)
         finally:
-            conn.close()
+            release(conn)
 
     # ---- группы ----
     def _my_groups(self, conn, me_id):
