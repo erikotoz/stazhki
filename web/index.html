@@ -401,6 +401,21 @@ input,select{font-family:inherit;color:inherit}
 .lnk-btn{display:inline-flex;align-items:center;gap:5px;margin-left:auto;padding:5px 10px;border-radius:9px;
   background:var(--surface-2);border:.5px solid var(--line);color:var(--accent);font-weight:600;font-size:12.5px}
 .lnk-btn:hover{background:var(--accent-soft-2)}
+
+/* ── Удаление участника (крестик на карточке) ── */
+.pcard{position:relative}
+.pcard-x{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;
+  background:transparent;color:var(--text-3);font-size:12px;opacity:.55;transition:.15s}
+.pcard-x:hover,.pcard-x:active{opacity:1;color:var(--neg);background:var(--neg-tint)}
+
+/* ── Danger-зона в настройках (выйти/удалить группу) ── */
+.danger{margin-top:16px;padding-top:14px;border-top:.5px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.danger-h{font-size:13px;font-weight:600;color:var(--text-3)}
+.danger-btn{display:flex;align-items:center;justify-content:center;gap:8px;height:44px;border-radius:12px;
+  font-size:14.5px;font-weight:600;background:var(--surface-2);border:.5px solid var(--line);color:var(--text)}
+.danger-btn:hover{background:var(--surface-3)}
+.danger-btn.del{color:var(--neg)}
+.danger-btn.del:hover{background:var(--neg-tint);border-color:var(--neg)}
 </style>
 </head>
 <body>

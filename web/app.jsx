@@ -1,7 +1,7 @@
 // app.jsx — «Стажки в расчёте». Версия с ГРУППАМИ.
 // Экран групп → группа (балансы, граф, переводы, лента) → настройки.
 // Данные с сервера (server.py). Участники группы — «места» (member), могут быть призраками.
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef } = React;
 const S = window.Settle;
 const APP_NAME = "Стажки в расчёте";
 
@@ -9,6 +9,16 @@ const APP_NAME = "Стажки в расчёте";
 const TG = window.Telegram && window.Telegram.WebApp;
 const inTelegram = !!(TG && TG.initData);
 let CFG = { telegram: false, devLogin: true, bot: "stazhki_v_raschete_bot", app: "app" };
+
+// Подтверждение: в Телеграме — нативное окно, иначе — обычный confirm
+function confirmDialog(message) {
+  return new Promise((resolve) => {
+    try {
+      if (inTelegram && TG.showConfirm) { TG.showConfirm(message, (ok) => resolve(!!ok)); return; }
+    } catch (e) {}
+    resolve(window.confirm(message));
+  });
+}
 
 // ───────────────────────── API ─────────────────────────
 const TOKEN_KEY = "kkd-token";
@@ -225,7 +235,8 @@ function BalanceSection({ title, total, dir, entries, colorOf, emptyText, onPay,
 function PaymentDialog({ open, peer, defaultAmount, onClose, onConfirm }) {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) { setAmount(defaultAmount ? String(defaultAmount) : ""); setBusy(false); } }, [open, defaultAmount]);
+  const submitting = useRef(false);
+  useEffect(() => { if (open) { setAmount(defaultAmount ? String(defaultAmount) : ""); setBusy(false); submitting.current = false; } }, [open, defaultAmount]);
   if (!open) return null;
   const amt = parseAmount(amount);
   return (
@@ -252,7 +263,8 @@ function PaymentDialog({ open, peer, defaultAmount, onClose, onConfirm }) {
         <div className="sheet-foot">
           <button className="btn-primary" disabled={!(amt > 0) || busy}
             style={{ opacity: amt > 0 && !busy ? 1 : 0.45 }}
-            onClick={async () => { setBusy(true); try { await onConfirm(amt); } finally { setBusy(false); } }}>
+            onClick={async () => { if (submitting.current) return; submitting.current = true; setBusy(true);
+              try { await onConfirm(amt); } finally { submitting.current = false; setBusy(false); } }}>
             Подтвердить перевод {amt > 0 && <span className="num" style={{ marginLeft: 4 }}>· {S.fmt(Math.round(amt * 100))}</span>}
           </button>
         </div>
@@ -302,7 +314,7 @@ function NotificationsPanel({ open, notifications, paymentsById, onClose, onConf
 }
 
 // ───────────────────────── настройки (имя + реквизиты) ─────────────────────────
-function SettingsSheet({ open, initial, onClose, onSave }) {
+function SettingsSheet({ open, initial, onClose, onSave, group }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [bank, setBank] = useState("");
@@ -333,6 +345,13 @@ function SettingsSheet({ open, initial, onClose, onSave }) {
             <input className="input" value={bank} onChange={(e) => setBank(e.target.value)} placeholder="Например, Тинькофф" />
           </div>
           <p className="hint">Номер и банк видят те, кто должен вам — чтобы знать, куда перевести.</p>
+          {group && (
+            <div className="danger">
+              <div className="danger-h">Группа «{group.name}»</div>
+              <button className="danger-btn" onClick={group.onLeave}><Ic.logout /> Выйти из группы</button>
+              {group.isCreator && <button className="danger-btn del" onClick={group.onDelete}><Ic.trash /> Удалить группу</button>}
+            </div>
+          )}
         </div>
         <div className="sheet-foot">
           <button className="btn-primary" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }}
@@ -568,6 +587,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
   const [settings, setSettings] = useState(false);
 
   const meMid = useMemo(() => (members.find((m) => m.isMe) || {}).id || initial.myMemberId, [members]);
+  const isCreator = meUser.id === groupMeta.createdBy;
 
   const applyState = (d) => {
     if (d.members) setMembers(d.members);
@@ -641,14 +661,39 @@ function GroupView({ initial, dark, setDark, onBack }) {
     try { navigator.clipboard.writeText(txt); } catch (e) {}
     setCopied(true); setTimeout(() => setCopied(false), 1600);
   }
-  function copyInvite() {
+  function inviteLink() {
     const code = groupMeta.inviteCode;
-    const url = inTelegram
-      ? `https://t.me/${CFG.bot}/${CFG.app}?startapp=${code}`
-      : location.origin + "/?join=" + code;
-    try { navigator.clipboard.writeText(url); } catch (e) {}
-    if (inTelegram && TG.switchInlineQuery) { /* можно делиться через Телеграм */ }
+    return inTelegram ? `https://t.me/${CFG.bot}/${CFG.app}?startapp=${code}` : location.origin + "/?join=" + code;
+  }
+  function shareInvite() {
+    const link = inviteLink();
+    // в Телеграме открываем нативный шеринг (выбор чата), иначе копируем ссылку
+    if (inTelegram && TG.openTelegramLink) {
+      const text = "Заходи в группу «" + groupMeta.name + "» — делим расходы в «Стажках»";
+      TG.openTelegramLink("https://t.me/share/url?url=" + encodeURIComponent(link) + "&text=" + encodeURIComponent(text));
+      return;
+    }
+    try { navigator.clipboard.writeText(link); } catch (e) {}
     setInvCopied(true); setTimeout(() => setInvCopied(false), 1600);
+  }
+  async function removeMember(m) {
+    if (!(await confirmDialog("Убрать «" + m.name + "» из группы?"))) return;
+    try { applyState(await api("/members/" + m.id, { method: "DELETE" })); } catch (ex) { alert(ex.message); }
+  }
+  async function leaveGroup() {
+    const myBal = balances[meMid] || 0;
+    let msg = "Выйти из группы «" + groupMeta.name + "»?";
+    if (myBal > 50) msg += " Вам ещё должны " + S.fmt(myBal) + " — после выхода вы перестанете это видеть.";
+    else if (myBal < -50) msg += " Вы ещё должны " + S.fmt(-myBal) + " — долг останется за вами.";
+    if (!(await confirmDialog(msg))) return;
+    try { await api("/groups/" + gid + "/leave", { method: "POST" }); onBack(); } catch (ex) { alert(ex.message); }
+  }
+  async function deleteGroup() {
+    const outstanding = Object.values(balances).some((v) => Math.abs(v) >= 50);
+    let msg = "Удалить группу «" + groupMeta.name + "» со всеми тратами? Отменить нельзя.";
+    if (outstanding) msg += " Внимание: не все ещё рассчитались — есть непогашенные долги.";
+    if (!(await confirmDialog(msg))) return;
+    try { await api("/groups/" + gid, { method: "DELETE" }); onBack(); } catch (ex) { alert(ex.message); }
   }
 
   const grouped = useMemo(() => {
@@ -667,8 +712,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
 
   const PartCard = ({ m }) => {
     const b = balances[m.id] || 0;
-    const cls = Math.abs(b) < 50 ? "zero" : b > 0 ? "pos" : "neg";
-    const label = !m.claimed ? "ещё не в боте" : Math.abs(b) < 50 ? "в расчёте" : b > 0 ? "должны" : "должен";
+    const pos = b > 50, neg = b < -50;
     return (
       <div className={"pcard" + (m.claimed ? "" : " ghost")}>
         <div className="av" style={{ background: m.color }}>{(m.name || "?")[0]}</div>
@@ -677,10 +721,15 @@ function GroupView({ initial, dark, setDark, onBack }) {
             {m.isMe && <span style={{ color: "var(--text-3)", fontWeight: 500 }}> · Вы</span>}
             {!m.claimed && <span className="ghost-tag"><Ic.ghost /></span>}
           </div>
-          <div className={"pcard-bal " + (m.claimed ? cls : "zero")}>
-            {label}{m.claimed && Math.abs(b) >= 50 && <> <span className="num">{S.fmt(Math.abs(b))}</span></>}
-          </div>
+          {!m.claimed
+            ? <div className="pcard-bal zero">ещё не в боте</div>
+            : (pos || neg)
+              ? <div className={"pcard-bal " + (pos ? "pos" : "neg")}><span className="num">{S.fmt(Math.abs(b))}</span></div>
+              : <div className="pcard-bal zero">в расчёте</div>}
         </div>
+        {isCreator && !m.isMe && (
+          <button className="pcard-x" aria-label="Убрать" onClick={(e) => { e.stopPropagation(); removeMember(m); }}><Ic.close /></button>
+        )}
       </div>
     );
   };
@@ -808,8 +857,8 @@ function GroupView({ initial, dark, setDark, onBack }) {
           <div className="col">
             <div className="card card-pad">
               <div className="card-h"><span className="card-title">Участники</span>
-                <button className="lnk-btn" onClick={copyInvite}>
-                  {invCopied ? <><Ic.check /> Ссылка скопирована</> : <><Ic.link /> Пригласить</>}
+                <button className="lnk-btn" onClick={shareInvite}>
+                  {invCopied ? <><Ic.check /> Скопировано</> : <><Ic.link /> Пригласить</>}
                 </button>
               </div>
               <div className="pgrid">{members.map((m) => <PartCard key={m.id} m={m} />)}</div>
@@ -851,7 +900,8 @@ function GroupView({ initial, dark, setDark, onBack }) {
       <NotificationsPanel open={notifOpen} notifications={notifications} paymentsById={paymentsById}
         onClose={() => setNotifOpen(false)} onConfirm={confirmReceipt} onDispute={disputeReceipt} />
       <SettingsSheet open={settings} initial={{ name: (members.find((m) => m.isMe) || {}).name || meUser.name, payPhone: meUser.payPhone, payBank: meUser.payBank }}
-        onClose={() => setSettings(false)} onSave={saveSettings} />
+        onClose={() => setSettings(false)} onSave={saveSettings}
+        group={{ name: groupMeta.name, isCreator, onLeave: leaveGroup, onDelete: deleteGroup }} />
     </div>
   );
 }

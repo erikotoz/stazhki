@@ -402,6 +402,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 st = group_state(conn, gid, me_id)
                 st["me"] = user_public(me)
                 return self._json(st)
+            if m and method == "DELETE":
+                return self._delete_group(conn, me, m.group(1))
+
+            m = re.match(r"^/api/groups/([\w\-]+)/leave$", path)
+            if m and method == "POST":
+                return self._leave_group(conn, me, m.group(1))
 
             m = re.match(r"^/api/groups/([\w\-]+)/expenses$", path)
             if m and method == "POST":
@@ -422,6 +428,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = re.match(r"^/api/members/([\w\-]+)$", path)
             if m and method == "PUT":
                 return self._rename_member(conn, me, m.group(1), self._body())
+            if m and method == "DELETE":
+                return self._delete_member(conn, me, m.group(1))
 
             if method == "POST" and path == "/api/notifications/read":
                 ex(conn, "UPDATE notifications SET read=1 WHERE user_id=?", (me_id,))
@@ -506,6 +514,58 @@ class Handler(http.server.BaseHTTPRequestHandler):
         st = group_state(conn, mem["group_id"], me["id"])
         st["me"] = user_public(me)
         return self._json(st)
+
+    def _member_referenced(self, conn, gid, mid):
+        if ex(conn, "SELECT 1 FROM expenses WHERE group_id=? AND (payer=? OR author_member=?)",
+              (gid, mid, mid)).fetchone():
+            return True
+        if ex(conn, "SELECT 1 FROM payments WHERE group_id=? AND (from_member=? OR to_member=?)",
+              (gid, mid, mid)).fetchone():
+            return True
+        for r in ex(conn, "SELECT split FROM expenses WHERE group_id=?", (gid,)).fetchall():
+            try:
+                sp = json.loads(r["split"] or "{}")
+            except Exception:
+                sp = {}
+            ids = list(sp.get("among") or []) + list((sp.get("shares") or {}).keys()) + list((sp.get("exact") or {}).keys())
+            if mid in ids:
+                return True
+        return False
+
+    def _delete_member(self, conn, me, mid):
+        mem = ex(conn, "SELECT * FROM members WHERE id=?", (mid,)).fetchone()
+        if not mem:
+            return self._err("Участник не найден.", 404)
+        g = ex(conn, "SELECT * FROM groups WHERE id=?", (mem["group_id"],)).fetchone()
+        if not g or g["created_by"] != me["id"]:
+            return self._err("Убирать участников может только создатель группы.", 403)
+        if mem["user_id"] == me["id"]:
+            return self._err("Себя убрать нельзя — используйте «Выйти из группы».")
+        if self._member_referenced(conn, mem["group_id"], mid):
+            return self._err("Нельзя убрать: у участника есть траты или переводы. Сначала удалите их.")
+        ex(conn, "DELETE FROM members WHERE id=?", (mid,))
+        return self._json(group_state(conn, mem["group_id"], me["id"]) | {"me": user_public(me)})
+
+    def _leave_group(self, conn, me, gid):
+        mm = my_member(conn, gid, me["id"])
+        if not mm:
+            return self._err("Вы не участник этой группы.", 403)
+        # освобождаем место (становится призраком) — история и долги сохраняются
+        ex(conn, "UPDATE members SET user_id=NULL WHERE id=?", (mm["id"],))
+        return self._json({"ok": True, "left": True})
+
+    def _delete_group(self, conn, me, gid):
+        g = ex(conn, "SELECT * FROM groups WHERE id=?", (gid,)).fetchone()
+        if not g:
+            return self._err("Группа не найдена.", 404)
+        if g["created_by"] != me["id"]:
+            return self._err("Удалить группу может только её создатель.", 403)
+        ex(conn, "DELETE FROM expenses WHERE group_id=?", (gid,))
+        ex(conn, "DELETE FROM payments WHERE group_id=?", (gid,))
+        ex(conn, "DELETE FROM members WHERE group_id=?", (gid,))
+        ex(conn, "DELETE FROM notifications WHERE group_id=?", (gid,))
+        ex(conn, "DELETE FROM groups WHERE id=?", (gid,))
+        return self._json({"ok": True, "deleted": True})
 
     # ---- траты ----
     def _save_expense(self, conn, me, gid, d, _):
