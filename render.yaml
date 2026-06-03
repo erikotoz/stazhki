@@ -4,10 +4,13 @@ services:
     name: stazhki-v-raschete
     runtime: python
     plan: free
+    region: frankfurt          # рядом с базой Supabase (Цюрих) — меньше задержка
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python server.py"
     envVars:
       - key: DATABASE_URL      # строку подключения к Supabase Postgres задашь в Render вручную
+        sync: false
+      - key: BOT_TOKEN         # токен бота из @BotFather
         sync: false
       - key: PYTHON_VERSION
         value: "3.12.6"
