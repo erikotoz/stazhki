@@ -636,13 +636,14 @@ function AddMemberSheet({ open, gid, onClose, onAdded, onShare, shared }) {
 }
 
 // ───────────────────────── деталь траты (кликабельно) ─────────────────────────
-function ExpenseDetail({ open, exp, members, meMid, names, onClose }) {
+function ExpenseDetail({ open, exp, members, meMid, names, onClose, onEdit, onDelete }) {
   if (!open || !exp) return null;
   const ids = members.map((m) => m.id);
   const shares = S.owedForExpense(exp, ids);
   const cat = (window.CATEGORIES.find((c) => c.id === exp.category)) || window.CATEGORIES[0];
   const Icn = cat.icon;
   const rows = members.filter((m) => (shares[m.id] || 0) > 0);
+  const mine = exp.author === meMid;
   return (
     <div className="scrim" onClick={onClose}>
       <div className="sheet" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
@@ -671,6 +672,14 @@ function ExpenseDetail({ open, exp, members, meMid, names, onClose }) {
           </div>
           <p className="hint">Это доли по конкретной трате. Долги считаются суммарно по всем тратам и переводам, поэтому отдельно «за эту трату» переводить не нужно — итог смотрите в «Кто кому скидывает».</p>
         </div>
+        {mine
+          ? <div className="sheet-foot det-acts">
+              <button className="det-btn" onClick={() => onEdit(exp)}><Ic.edit /> Изменить</button>
+              <button className="det-btn del" onClick={() => onDelete(exp)}><Ic.trash /> Удалить</button>
+            </div>
+          : <div className="sheet-foot" style={{ color: "var(--text-3)", fontSize: 12.5, textAlign: "center" }}>
+              Менять трату может только тот, кто её добавил.
+            </div>}
       </div>
     </div>
   );
@@ -754,7 +763,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
   }
   async function onDelete(id) {
     if (!confirm("Удалить эту трату?")) return;
-    try { applyState(await api("/expenses/" + id, { method: "DELETE" })); } catch (ex) { alert(ex.message); }
+    try { applyState(await api("/expenses/" + id, { method: "DELETE" })); setOpenExp(null); } catch (ex) { alert(ex.message); }
   }
   function openPay(entry) {
     setPayTo({ id: entry.id, name: entry.name, color: colorOf(entry.id), amount: Math.round((-entry.net) / 100) });
@@ -879,7 +888,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
     }
     const e = it.e;
     const cat = window.CATEGORIES.find((c) => c.id === e.category) || window.CATEGORIES[0];
-    const Icn = cat.icon, hue = cat.hue, mine = e.author === meMid;
+    const Icn = cat.icon, hue = cat.hue;
     return (
       <div className="fitem clickable" style={{ animationDelay: idx * 0.03 + "s" }} onClick={() => setOpenExp(e)}>
         <div className="fcat" style={{
@@ -893,12 +902,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
               : <><span>платил {names[e.payer] || "?"}</span><span className="sepd" /><span>{splitCount(e)} {pluralPeople(splitCount(e))}</span></>}
           </div>
         </div>
-        <div className="fright">
-          <div className="famt num">{S.fmt(it.amount)}</div>
-          {mine && <button className="fact" onClick={(ev) => { ev.stopPropagation(); openEdit(e); }} aria-label="Изменить"><Ic.edit /></button>}
-          {mine && <button className="fact del" onClick={(ev) => { ev.stopPropagation(); onDelete(e.id); }} aria-label="Удалить"><Ic.trash /></button>}
-          <span className="fchev"><Ic.arrow /></span>
-        </div>
+        <div className="fright"><div className="famt num">{S.fmt(it.amount)}</div></div>
       </div>
     );
   };
@@ -1074,7 +1078,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
         onClose={() => setSettings(false)} onSave={saveSettings}
         group={{ name: groupMeta.name, isCreator, onLeave: leaveGroup, onDelete: deleteGroup }} />
       <ExpenseDetail open={!!openExp} exp={openExp} members={members} meMid={meMid} names={names}
-        onClose={() => setOpenExp(null)} />
+        onClose={() => setOpenExp(null)} onEdit={(e) => { setOpenExp(null); openEdit(e); }} onDelete={(e) => onDelete(e.id)} />
       <AddMemberSheet open={addOpen} gid={gid} onClose={() => setAddOpen(false)} onAdded={applyState}
         onShare={shareInvite} shared={invCopied} />
     </div>
