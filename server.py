@@ -88,7 +88,8 @@ SCHEMA = [
         token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created REAL NOT NULL)""",
     """CREATE TABLE IF NOT EXISTS groups(
         id TEXT PRIMARY KEY, name TEXT NOT NULL, invite_code TEXT UNIQUE NOT NULL,
-        created_by TEXT, created REAL NOT NULL)""",
+        created_by TEXT, created REAL NOT NULL,
+        invite_policy TEXT DEFAULT 'all', payment_mode TEXT DEFAULT 'instant')""",
     """CREATE TABLE IF NOT EXISTS members(
         id TEXT PRIMARY KEY, group_id TEXT NOT NULL, display_name TEXT NOT NULL,
         claim_username TEXT, user_id TEXT, color TEXT, created REAL NOT NULL)""",
@@ -129,12 +130,24 @@ def migrate(conn):
         print("  migrate: пропуск (%s)" % e)
 
 
+def add_missing_columns(conn):
+    # Добавляем новые колонки в существующие таблицы (для уже созданных в проде баз).
+    cols = table_columns(conn, "groups")
+    for name, ddl in (("invite_policy", "TEXT DEFAULT 'all'"), ("payment_mode", "TEXT DEFAULT 'instant'")):
+        if name not in cols:
+            try:
+                ex(conn, "ALTER TABLE groups ADD COLUMN %s %s" % (name, ddl))
+            except Exception as e:
+                print("  alter groups.%s: %s" % (name, e))
+
+
 def init_db():
     conn = get_conn()
     try:
         migrate(conn)
         for s in SCHEMA:
             ex(conn, s)
+        add_missing_columns(conn)
     finally:
         release(conn)
 
@@ -258,8 +271,11 @@ def personal_totals(conn, gid, mid):
     """(вам должны, вы должны) для участника mid в копейках — нетто по парам."""
     if not mid:
         return (0, 0)
+    grow = ex(conn, "SELECT payment_mode FROM groups WHERE id=?", (gid,)).fetchone()
+    pmode = (grow["payment_mode"] if grow else "instant") or "instant"
+    pfilter = "status='confirmed'" if pmode == "confirm" else "status!='disputed'"
     exps = [expense_public(r) for r in ex(conn, "SELECT * FROM expenses WHERE group_id=?", (gid,)).fetchall()]
-    pays = [payment_public(r) for r in ex(conn, "SELECT * FROM payments WHERE group_id=? AND status!='disputed'", (gid,)).fetchall()]
+    pays = [payment_public(r) for r in ex(conn, "SELECT * FROM payments WHERE group_id=? AND " + pfilter, (gid,)).fetchall()]
     per = {}
     for e in exps:
         owed = _owed_for_expense(e)
@@ -332,8 +348,12 @@ def group_state(conn, gid, me_id):
     pay_rows = ex(conn, "SELECT m.id mid, u.pay_phone pp, u.pay_bank pb FROM members m "
                   "JOIN users u ON u.id=m.user_id WHERE m.group_id=?", (gid,)).fetchall()
     payinfo = {r["mid"]: {"payPhone": r["pp"], "payBank": r["pb"]} for r in pay_rows}
+    policy = (g["invite_policy"] or "all")
+    pmode = (g["payment_mode"] or "instant")
+    is_creator = (g["created_by"] == me_id)
     return {"group": {"id": g["id"], "name": g["name"], "inviteCode": g["invite_code"],
-                      "createdBy": g["created_by"]},
+                      "createdBy": g["created_by"], "invitePolicy": policy, "paymentMode": pmode,
+                      "isCreator": is_creator, "canInvite": is_creator or policy == "all"},
             "members": members, "expenses": expenses, "payments": payments,
             "notifications": notifs, "payInfo": payinfo,
             "myMemberId": mine["id"] if mine else None}
@@ -462,7 +482,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-myshare"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-roles"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
@@ -542,6 +562,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if m and method == "POST":
                 return self._leave_group(conn, me, m.group(1))
 
+            m = re.match(r"^/api/groups/([\w\-]+)/members$", path)
+            if m and method == "POST":
+                return self._add_member(conn, me, m.group(1), self._body())
+
             m = re.match(r"^/api/groups/([\w\-]+)/expenses$", path)
             if m and method == "POST":
                 return self._save_expense(conn, me, m.group(1), self._body(), None)
@@ -590,8 +614,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._err("Нужно название группы.")
         gid = uid("g")
         code = secrets.token_urlsafe(7)
-        ex(conn, "INSERT INTO groups(id,name,invite_code,created_by,created) VALUES(?,?,?,?,?)",
-           (gid, name, code, me["id"], time.time()))
+        policy = "creator" if d.get("invitePolicy") == "creator" else "all"
+        pmode = "confirm" if d.get("paymentMode") == "confirm" else "instant"
+        ex(conn, "INSERT INTO groups(id,name,invite_code,created_by,created,invite_policy,payment_mode) VALUES(?,?,?,?,?,?,?)",
+           (gid, name, code, me["id"], time.time(), policy, pmode))
         # место создателя — сразу занято
         idx = 0
         ex(conn, "INSERT INTO members(id,group_id,display_name,claim_username,user_id,color,created) VALUES(?,?,?,?,?,?,?)",
@@ -611,6 +637,26 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 ex(conn, "UPDATE members SET user_id=? WHERE id=?", (u["id"], r["id"]))
         st = group_state(conn, gid, me["id"])
         st["me"] = user_public(me)
+        return self._json(st)
+
+    def _add_member(self, conn, me, gid, d):
+        g = ex(conn, "SELECT * FROM groups WHERE id=?", (gid,)).fetchone()
+        mm = my_member(conn, gid, me["id"])
+        if not g or not mm:
+            return self._err("Вы не участник этой группы.", 403)
+        if (g["invite_policy"] or "all") == "creator" and g["created_by"] != me["id"]:
+            return self._err("Добавлять участников может только создатель группы.", 403)
+        uname = norm_username(d.get("username"))
+        name = unique_name(conn, gid, (d.get("name") or "").strip() or (uname or "Участник"))
+        idx = ex(conn, "SELECT COUNT(*) AS c FROM members WHERE group_id=?", (gid,)).fetchone()["c"]
+        new_id = uid("m")
+        ex(conn, "INSERT INTO members(id,group_id,display_name,claim_username,user_id,color,created) VALUES(?,?,?,?,?,?,?)",
+           (new_id, gid, name, uname, None, "oklch(0.62 0.14 %d)" % HUES[idx % len(HUES)], time.time()))
+        if uname:   # если такой пользователь уже в боте — пусть займёт сразу
+            u = ex(conn, "SELECT id FROM users WHERE username=?", (uname,)).fetchone()
+            if u:
+                ex(conn, "UPDATE members SET user_id=? WHERE id=? AND user_id IS NULL", (u["id"], new_id))
+        st = group_state(conn, gid, me["id"]); st["me"] = user_public(me)
         return self._json(st)
 
     def _join_group(self, conn, me, code):

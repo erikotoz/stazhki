@@ -370,9 +370,11 @@ function SettingsSheet({ open, initial, onClose, onSave, group }) {
 function CreateGroupSheet({ open, onClose, onCreated }) {
   const [name, setName] = useState("");
   const [rows, setRows] = useState([{ name: "", username: "" }, { name: "", username: "" }]);
+  const [invitePolicy, setInvitePolicy] = useState("all");      // all | creator
+  const [paymentMode, setPaymentMode] = useState("instant");    // instant | confirm
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  useEffect(() => { if (open) { setName(""); setRows([{ name: "", username: "" }, { name: "", username: "" }]); setErr(""); setBusy(false); } }, [open]);
+  useEffect(() => { if (open) { setName(""); setRows([{ name: "", username: "" }, { name: "", username: "" }]); setInvitePolicy("all"); setPaymentMode("instant"); setErr(""); setBusy(false); } }, [open]);
   if (!open) return null;
   const setRow = (i, k, v) => setRows((r) => r.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   async function submit() {
@@ -381,7 +383,7 @@ function CreateGroupSheet({ open, onClose, onCreated }) {
     const members = rows.filter((r) => r.name.trim() || r.username.trim())
       .map((r) => ({ name: r.name.trim(), username: r.username.trim() }));
     setBusy(true);
-    try { onCreated(await api("/groups", { method: "POST", body: { name: name.trim(), members } })); }
+    try { onCreated(await api("/groups", { method: "POST", body: { name: name.trim(), members, invitePolicy, paymentMode } })); }
     catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   }
   return (
@@ -416,6 +418,23 @@ function CreateGroupSheet({ open, onClose, onCreated }) {
             <button className="add-row" onClick={() => setRows((r) => [...r, { name: "", username: "" }])}>
               <Ic.plus /> Ещё участник
             </button>
+          </div>
+          <div className="field">
+            <div className="flabel">Кто может добавлять участников</div>
+            <div className="seg" style={{ display: "flex", width: "100%" }}>
+              <button type="button" className={invitePolicy === "all" ? "on" : ""} onClick={() => setInvitePolicy("all")}>Все</button>
+              <button type="button" className={invitePolicy === "creator" ? "on" : ""} onClick={() => setInvitePolicy("creator")}>Только я</button>
+            </div>
+          </div>
+          <div className="field">
+            <div className="flabel">Когда засчитывать перевод</div>
+            <div className="seg" style={{ display: "flex", width: "100%" }}>
+              <button type="button" className={paymentMode === "instant" ? "on" : ""} onClick={() => setPaymentMode("instant")}>Сразу</button>
+              <button type="button" className={paymentMode === "confirm" ? "on" : ""} onClick={() => setPaymentMode("confirm")}>После подтверждения</button>
+            </div>
+            <p className="hint" style={{ marginTop: 6 }}>
+              {paymentMode === "confirm" ? "Долг уменьшится только когда получатель подтвердит перевод." : "Долг уменьшается сразу; получатель может оспорить, если не получил."}
+            </p>
           </div>
           {err && <div className="auth-err">{err}</div>}
         </div>
@@ -569,6 +588,46 @@ function GroupsScreen({ me, groups, dark, setDark, onOpen, onCreated, onLogout, 
 }
 
 // ───────────────────────── группа ─────────────────────────
+// ───────────────────────── добавить участника (призрак / ссылка) ─────────────────────────
+function AddMemberSheet({ open, gid, onClose, onAdded, onShare, shared }) {
+  const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => { if (open) { setName(""); setUsername(""); setErr(""); setBusy(false); } }, [open]);
+  if (!open) return null;
+  async function addGhost() {
+    if (!name.trim() && !username.trim()) { setErr("Впишите имя или @ник."); return; }
+    setBusy(true);
+    try { onAdded(await api("/groups/" + gid + "/members", { method: "POST", body: { name: name.trim(), username: username.trim() } })); onClose(); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  }
+  return (
+    <div className="scrim" onClick={onClose}>
+      <div className="sheet" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-grab" />
+        <div className="sheet-h"><b>Добавить участника</b>
+          <button className="icon-btn" onClick={onClose} aria-label="Закрыть"
+            style={{ width: 34, height: 34, boxShadow: "none", background: "var(--surface-2)" }}><Ic.close /></button>
+        </div>
+        <div className="sheet-body">
+          <div className="field"><div className="flabel">Имя</div>
+            <input className="input" value={name} autoFocus onChange={(e) => setName(e.target.value)} placeholder="Маша" /></div>
+          <div className="field"><div className="flabel">@ник в Телеграме (необязательно)</div>
+            <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="@masha" /></div>
+          <p className="hint">Появится как «призрак» — за него уже можно заносить траты. Если @ник верный, он сам займёт это место, когда зайдёт.</p>
+          {err && <div className="auth-err">{err}</div>}
+          <button className="btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={busy} onClick={addGhost}>
+            <Ic.plus /> Добавить призрака</button>
+          <div className="or-div"><span>или пришлите ссылку</span></div>
+          <button className="btn-outline" onClick={onShare}>
+            {shared ? <><Ic.check /> Ссылка скопирована</> : <><Ic.link /> Поделиться ссылкой</>}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ───────────────────────── деталь траты (кликабельно) ─────────────────────────
 function ExpenseDetail({ open, exp, members, meMid, names, onClose }) {
   if (!open || !exp) return null;
@@ -624,6 +683,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
   const [editing, setEditing] = useState(null);
   const [copied, setCopied] = useState(false);
   const [invCopied, setInvCopied] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [feedTab, setFeedTab] = useState("withme");   // withme | mine
   const [openExp, setOpenExp] = useState(null);
   const [payTo, setPayTo] = useState(null);
@@ -650,7 +710,8 @@ function GroupView({ initial, dark, setDark, onBack }) {
     return () => clearInterval(iv);
   }, [sheetOpen, payTo, notifOpen, settings]);
 
-  const activePayments = useMemo(() => payments.filter((p) => p.status !== "disputed"), [payments]);
+  const confirmMode = groupMeta.paymentMode === "confirm";
+  const activePayments = useMemo(() => payments.filter((p) => confirmMode ? p.status === "confirmed" : p.status !== "disputed"), [payments, confirmMode]);
   const paymentsById = useMemo(() => Object.fromEntries(payments.map((p) => [p.id, p])), [payments]);
   const colorById = useMemo(() => Object.fromEntries(members.map((u) => [u.id, u.color])), [members]);
   const colorOf = (id) => colorById[id] || "oklch(0.62 0.14 260)";
@@ -873,9 +934,9 @@ function GroupView({ initial, dark, setDark, onBack }) {
   const ParticipantsCard = (
     <div className="card card-pad">
       <div className="card-h"><span className="card-title">Участники</span>
-        <button className="lnk-btn" onClick={shareInvite}>
-          {invCopied ? <><Ic.check /> Скопировано</> : <><Ic.link /> Пригласить</>}
-        </button>
+        {groupMeta.canInvite && (
+          <button className="lnk-btn" onClick={() => setAddOpen(true)}><Ic.plus /> Добавить</button>
+        )}
       </div>
       <div className="pgrid">{members.map((m) => <PartCard key={m.id} m={m} />)}</div>
     </div>
@@ -991,6 +1052,8 @@ function GroupView({ initial, dark, setDark, onBack }) {
         group={{ name: groupMeta.name, isCreator, onLeave: leaveGroup, onDelete: deleteGroup }} />
       <ExpenseDetail open={!!openExp} exp={openExp} members={members} meMid={meMid} names={names}
         onClose={() => setOpenExp(null)} />
+      <AddMemberSheet open={addOpen} gid={gid} onClose={() => setAddOpen(false)} onAdded={applyState}
+        onShare={shareInvite} shared={invCopied} />
     </div>
   );
 }
