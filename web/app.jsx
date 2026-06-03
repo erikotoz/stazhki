@@ -799,6 +799,36 @@ function GroupView({ initial, dark, setDark, onBack }) {
     </div>
   );
 
+  const ParticipantsCard = (
+    <div className="card card-pad">
+      <div className="card-h"><span className="card-title">Участники</span>
+        <button className="lnk-btn" onClick={shareInvite}>
+          {invCopied ? <><Ic.check /> Скопировано</> : <><Ic.link /> Пригласить</>}
+        </button>
+      </div>
+      <div className="pgrid">{members.map((m) => <PartCard key={m.id} m={m} />)}</div>
+    </div>
+  );
+
+  const FeedCard = (
+    <div className="card card-pad">
+      <div className="card-h"><span className="card-title">Траты</span>
+        <div className="seg" style={{ marginLeft: "auto" }}>
+          <button className={feedMine ? "" : "on"} onClick={() => setFeedMine(false)}>Все</button>
+          <button className={feedMine ? "on" : ""} onClick={() => setFeedMine(true)}>Мои</button>
+        </div>
+      </div>
+      <div className="feed">
+        {grouped.length ? grouped.map((bucket) => (
+          <React.Fragment key={bucket.key}>
+            <div className="fdate-group">{bucket.key}</div>
+            {bucket.items.map((e, i) => <FeedItem key={e.id} e={e} idx={i} />)}
+          </React.Fragment>
+        )) : <div className="bd-empty" style={{ padding: "16px 4px" }}>{feedMine ? "Нет трат с вашим участием" : "Трат пока нет"}</div>}
+      </div>
+    </div>
+  );
+
   return (
     <div className="app">
       <header className="hdr">
@@ -855,38 +885,20 @@ function GroupView({ initial, dark, setDark, onBack }) {
             {TransfersCard}
           </div>
           <div className="col">
-            <div className="card card-pad">
-              <div className="card-h"><span className="card-title">Участники</span>
-                <button className="lnk-btn" onClick={shareInvite}>
-                  {invCopied ? <><Ic.check /> Скопировано</> : <><Ic.link /> Пригласить</>}
-                </button>
-              </div>
-              <div className="pgrid">{members.map((m) => <PartCard key={m.id} m={m} />)}</div>
-            </div>
-            <div className="card card-pad">
-              <div className="card-h"><span className="card-title">Траты</span>
-                <div className="seg" style={{ marginLeft: "auto" }}>
-                  <button className={feedMine ? "" : "on"} onClick={() => setFeedMine(false)}>Все</button>
-                  <button className={feedMine ? "on" : ""} onClick={() => setFeedMine(true)}>Мои</button>
-                </div>
-              </div>
-              <div className="feed">
-                {grouped.length ? grouped.map((bucket) => (
-                  <React.Fragment key={bucket.key}>
-                    <div className="fdate-group">{bucket.key}</div>
-                    {bucket.items.map((e, i) => <FeedItem key={e.id} e={e} idx={i} />)}
-                  </React.Fragment>
-                )) : <div className="bd-empty" style={{ padding: "16px 4px" }}>{feedMine ? "Нет трат с вашим участием" : "Трат пока нет"}</div>}
-              </div>
-            </div>
+            {ParticipantsCard}
+            {FeedCard}
           </div>
         </div>
       ) : (
-        <div className="card card-pad" style={{ marginTop: "var(--gap-lg)" }}>
-          <div className="empty"><div className="empty-emoji">🧾</div>
-            <div className="empty-t">Пока нет трат</div>
-            <div className="empty-d">Добавьте первую трату — и мы сразу посчитаем, кто кому сколько должен.</div>
-            <button className="btn-primary" style={{ marginTop: 14 }} onClick={openNew}><Ic.plus /> Добавить трату</button>
+        <div style={{ marginTop: "var(--gap-lg)" }}>
+          {ParticipantsCard}
+          <div className="card card-pad">
+            <div className="empty"><div className="empty-emoji">🧾</div>
+              <div className="empty-t">Пока нет трат</div>
+              <div className="empty-d">Добавьте первую трату — и мы сразу посчитаем, кто кому сколько должен.
+                А чтобы позвать друзей — кнопка «Пригласить» выше.</div>
+              <button className="btn-primary" style={{ marginTop: 14 }} onClick={openNew}><Ic.plus /> Добавить трату</button>
+            </div>
           </div>
         </div>
       )}
