@@ -86,6 +86,12 @@ function expenseInvolves(exp, id) {
   if (sp.mode === "exact") return (sp.exact || {})[id] != null;
   return false;
 }
+function splitParticipants(sp) {
+  sp = sp || {};
+  if (sp.mode === "shares") return Object.keys(sp.shares || {}).filter((k) => sp.shares[k] > 0);
+  if (sp.mode === "exact") return Object.keys(sp.exact || {});
+  return sp.among || [];
+}
 function splitCount(exp) {
   const sp = exp.split || {};
   if (sp.mode === "equal") return (sp.among || []).length;
@@ -234,7 +240,7 @@ function BalanceSection({ title, total, dir, entries, colorOf, emptyText, onPay,
 }
 
 // ───────────────────────── диалог перевода ─────────────────────────
-function PaymentDialog({ open, peer, defaultAmount, onClose, onConfirm }) {
+function PaymentDialog({ open, peer, defaultAmount, onClose, onConfirm, confirmMode }) {
   const [amount, setAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
@@ -259,8 +265,9 @@ function PaymentDialog({ open, peer, defaultAmount, onClose, onConfirm }) {
             <input className="input amount-input" inputMode="decimal" placeholder="0 ₽"
               value={amount} autoFocus onChange={(e) => setAmount(e.target.value)} />
           </div>
-          <p className="hint">Долг уменьшится сразу. {peer.name} получит уведомление и сможет подтвердить
-            получение или отметить, что перевод не пришёл.</p>
+          <p className="hint">{confirmMode
+            ? <>Долг уменьшится, когда {peer.name} подтвердит получение. До подтверждения он остаётся.</>
+            : <>Долг уменьшится сразу. {peer.name} получит уведомление и сможет подтвердить получение или отметить, что перевод не пришёл.</>}</p>
         </div>
         <div className="sheet-foot">
           <button className="btn-primary" disabled={!(amt > 0) || busy}
@@ -684,6 +691,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
   const [copied, setCopied] = useState(false);
   const [invCopied, setInvCopied] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [ghostHint, setGhostHint] = useState(false);
   const [feedTab, setFeedTab] = useState("withme");   // withme | mine
   const [openExp, setOpenExp] = useState(null);
   const [payTo, setPayTo] = useState(null);
@@ -737,6 +745,11 @@ function GroupView({ initial, dark, setDark, onBack }) {
         ? await api("/expenses/" + exp.id, { method: "PUT", body: exp })
         : await api("/groups/" + gid + "/expenses", { method: "POST", body: exp });
       applyState(d); setSheetOpen(false); setEditing(null);
+      // если в новой трате есть участники-призраки — подскажем пригласить их
+      if (!isEdit && d.members) {
+        const pids = splitParticipants(exp.split);
+        if (d.members.some((m) => pids.includes(m.id) && !m.claimed)) setGhostHint(true);
+      }
     } catch (ex) { alert(ex.message); }
   }
   async function onDelete(id) {
@@ -851,16 +864,16 @@ function GroupView({ initial, dark, setDark, onBack }) {
 
   const FeedRow = ({ it, idx }) => {
     if (it.type === "payment") {
-      const p = it.p;
-      const st = p.status === "confirmed" ? "подтверждён" : p.status === "disputed" ? "оспорен" : "ждёт подтверждения";
+      const p = it.p, disputed = p.status === "disputed";
+      const st = p.status === "confirmed" ? "подтверждён" : disputed ? "оспорен — не зачтён" : "ждёт подтверждения";
       return (
-        <div className="fitem" style={{ animationDelay: idx * 0.03 + "s" }}>
+        <div className="fitem" style={{ animationDelay: idx * 0.03 + "s", opacity: disputed ? 0.6 : 1 }}>
           <div className="fcat" style={{ background: "var(--accent-soft-2)", color: "var(--accent)" }}><Ic.send /></div>
           <div className="finfo">
             <div className="ftitle">Перевод → {names[p.to] || "?"}</div>
-            <div className="fmeta"><span>{st}</span>{p.note && <><span className="sepd" /><span>{p.note}</span></>}</div>
+            <div className="fmeta"><span className={disputed ? "neg" : ""}>{st}</span>{p.note && <><span className="sepd" /><span>{p.note}</span></>}</div>
           </div>
-          <div className="fright"><div className="famt num">{S.fmt(it.amount)}</div></div>
+          <div className="fright"><div className={"famt num" + (disputed ? " struck" : "")}>{S.fmt(it.amount)}</div></div>
         </div>
       );
     }
@@ -984,6 +997,16 @@ function GroupView({ initial, dark, setDark, onBack }) {
         </div>
       </header>
 
+      {ghostHint && (
+        <div className="ghost-banner">
+          <div>В этой трате есть участники, которых ещё нет в боте. Пришлите им ссылку — тогда они увидят свои долги и смогут подтверждать переводы.</div>
+          <div className="ghost-banner-acts">
+            <button className="btn-mini ok" onClick={() => { shareInvite(); setGhostHint(false); }}><Ic.link /> Пригласить</button>
+            <button className="btn-mini no" onClick={() => setGhostHint(false)}>Скрыть</button>
+          </div>
+        </div>
+      )}
+
       <div className="card card-pad" style={{ marginTop: "var(--gap-lg)" }}>
         <div className="psum">
           <div className="psum-cell"><div className="psum-lbl">Вам должны</div>
@@ -1044,7 +1067,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
       <NewExpenseSheet open={sheetOpen} onClose={() => { setSheetOpen(false); setEditing(null); }}
         onSave={onSave} participants={members} editing={editing} defaultPayer={meMid} />
       <PaymentDialog open={!!payTo} peer={payTo || {}} defaultAmount={payTo ? payTo.amount : 0}
-        onClose={() => setPayTo(null)} onConfirm={confirmPay} />
+        onClose={() => setPayTo(null)} onConfirm={confirmPay} confirmMode={confirmMode} />
       <NotificationsPanel open={notifOpen} notifications={notifications} paymentsById={paymentsById}
         onClose={() => setNotifOpen(false)} onConfirm={confirmReceipt} onDispute={disputeReceipt} />
       <SettingsSheet open={settings} initial={{ name: (members.find((m) => m.isMe) || {}).name || meUser.name, payPhone: meUser.payPhone, payBank: meUser.payBank }}

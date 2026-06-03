@@ -61,13 +61,16 @@
     return paid;
   }
 
+  // Порог «в расчёте» (копейки) — мелкие остатки округления не считаем долгом
+  var EPS = 50;
+
   // Greedy minimal transfers from balances (kopecks)
   function minimalTransfers(balances) {
     const creditors = [];
     const debtors = [];
     Object.entries(balances).forEach(([id, k]) => {
-      if (k > 0) creditors.push({ id, k });
-      else if (k < 0) debtors.push({ id, k: -k });
+      if (k > EPS) creditors.push({ id, k });
+      else if (k < -EPS) debtors.push({ id, k: -k });
     });
     creditors.sort((a, b) => b.k - a.k);
     debtors.sort((a, b) => b.k - a.k);
@@ -110,8 +113,8 @@
       const rev = b + ">" + a;
       seen.add(key); seen.add(rev);
       const net = (debt[key] || 0) - (debt[rev] || 0);
-      if (net > 0) transfers.push({ from: a, to: b, amount: net });
-      else if (net < 0) transfers.push({ from: b, to: a, amount: -net });
+      if (net > EPS) transfers.push({ from: a, to: b, amount: net });
+      else if (net < -EPS) transfers.push({ from: b, to: a, amount: -net });
     });
     return transfers.sort((x, y) => y.amount - x.amount);
   }

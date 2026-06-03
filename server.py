@@ -232,6 +232,41 @@ def expense_involves_member(e, mid):
     return mid in (sp.get("among") or [])   # equal (по умолчанию)
 
 
+def validate_split(conn, gid, payer, amount, split):
+    """Проверка траты: плательщик и все участники — из этой группы; режим корректен.
+    Возвращает текст ошибки или None."""
+    ids = {r["id"] for r in ex(conn, "SELECT id FROM members WHERE group_id=?", (gid,)).fetchall()}
+    if payer not in ids:
+        return "Плательщик не из этой группы."
+    sp = split or {"mode": "equal"}
+    mode = sp.get("mode", "equal")
+    if mode == "equal":
+        among = sp.get("among") or []
+        if not among:
+            return "Выберите хотя бы одного участника."
+        if any(m not in ids for m in among):
+            return "Среди участников есть посторонние."
+    elif mode == "shares":
+        sh = {k: v for k, v in (sp.get("shares") or {}).items() if (v or 0) > 0}
+        if not sh:
+            return "Укажите доли хотя бы одному участнику."
+        if any(k not in ids for k in sh):
+            return "Среди участников есть посторонние."
+    elif mode == "exact":
+        em = sp.get("exact") or {}
+        if not em:
+            return "Укажите суммы участникам."
+        if any(k not in ids for k in em):
+            return "Среди участников есть посторонние."
+        total = round((amount or 0) * 100)
+        s = sum(round((v or 0) * 100) for v in em.values())
+        if abs(s - total) > 1:
+            return "Сумма по участникам должна равняться сумме траты."
+    else:
+        return "Неизвестный режим деления."
+    return None
+
+
 def _owed_for_expense(e):
     """Доли по трате -> {member_id: копейки}."""
     out = {}
@@ -398,6 +433,12 @@ def verify_telegram(init_data):
     calc = hmac.new(secret, dcs.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(calc, got or ""):
         return None
+    # свежесть: отклоняем initData старше суток (защита от повторного использования)
+    try:
+        if time.time() - float(pairs.get("auth_date", 0)) > 86400:
+            return None
+    except (TypeError, ValueError):
+        pass
     try:
         return json.loads(pairs.get("user", "{}"))
     except Exception:
@@ -482,7 +523,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-roles"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v3-fixes"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
@@ -622,14 +663,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         idx = 0
         ex(conn, "INSERT INTO members(id,group_id,display_name,claim_username,user_id,color,created) VALUES(?,?,?,?,?,?,?)",
            (uid("m"), gid, me["name"], me["username"], me["id"], "oklch(0.62 0.14 %d)" % HUES[0], time.time()))
-        # призраки
+        # призраки (один @ник — одно место: дубли пропускаем, чтобы человек не занял два)
+        seen = set()
+        if me["username"]:
+            seen.add(me["username"])
         for mem in (d.get("members") or []):
+            un = norm_username(mem.get("username"))
+            if un and un in seen:
+                continue
             idx += 1
-            dn = (mem.get("name") or "").strip() or (norm_username(mem.get("username")) or "Участник")
-            dn = unique_name(conn, gid, dn)
+            dn = unique_name(conn, gid, (mem.get("name") or "").strip() or (un or "Участник"))
             ex(conn, "INSERT INTO members(id,group_id,display_name,claim_username,user_id,color,created) VALUES(?,?,?,?,?,?,?)",
-               (uid("m"), gid, dn, norm_username(mem.get("username")), None,
-                "oklch(0.62 0.14 %d)" % HUES[idx % len(HUES)], time.time()))
+               (uid("m"), gid, dn, un, None, "oklch(0.62 0.14 %d)" % HUES[idx % len(HUES)], time.time()))
+            if un:
+                seen.add(un)
         # вдруг кто-то из призраков — уже зарегистрированный пользователь: пусть займёт сразу
         for r in ex(conn, "SELECT * FROM members WHERE group_id=? AND user_id IS NULL AND claim_username IS NOT NULL", (gid,)).fetchall():
             u = ex(conn, "SELECT id FROM users WHERE username=?", (r["claim_username"],)).fetchone()
@@ -647,6 +694,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if (g["invite_policy"] or "all") == "creator" and g["created_by"] != me["id"]:
             return self._err("Добавлять участников может только создатель группы.", 403)
         uname = norm_username(d.get("username"))
+        if uname and ex(conn, "SELECT 1 FROM members WHERE group_id=? AND claim_username=?", (gid, uname)).fetchone():
+            return self._err("Участник с таким @ником уже в группе.", 409)
         name = unique_name(conn, gid, (d.get("name") or "").strip() or (uname or "Участник"))
         idx = ex(conn, "SELECT COUNT(*) AS c FROM members WHERE group_id=?", (gid,)).fetchone()["c"]
         new_id = uid("m")
@@ -683,11 +732,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         gid = g["id"]
         mid = d.get("memberId")
         if not my_member(conn, gid, me["id"]):
-            if mid:   # занять выбранного призрака
+            if mid:   # занять выбранного призрака (атомарно — на случай гонки)
                 ghost = ex(conn, "SELECT * FROM members WHERE id=? AND group_id=?", (mid, gid)).fetchone()
                 if not ghost or ghost["user_id"]:
                     return self._err("Это место уже занято.", 409)
-                ex(conn, "UPDATE members SET user_id=?, claim_username=? WHERE id=?", (me["id"], me["username"], mid))
+                cur = ex(conn, "UPDATE members SET user_id=?, claim_username=? WHERE id=? AND user_id IS NULL",
+                         (me["id"], me["username"], mid))
+                if cur.rowcount == 0:
+                    return self._err("Это место только что заняли.", 409)
             else:     # новое место
                 idx = ex(conn, "SELECT COUNT(*) AS c FROM members WHERE group_id=?", (gid,)).fetchone()["c"]
                 ex(conn, "INSERT INTO members(id,group_id,display_name,claim_username,user_id,color,created) VALUES(?,?,?,?,?,?,?)",
@@ -755,8 +807,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         mm = my_member(conn, gid, me["id"])
         if not mm:
             return self._err("Вы не участник этой группы.", 403)
-        # освобождаем место (становится призраком) — история и долги сохраняются
-        ex(conn, "UPDATE members SET user_id=NULL WHERE id=?", (mm["id"],))
+        # освобождаем место (становится призраком) — история и долги сохраняются;
+        # обнуляем @ник, чтобы при следующем входе не затягивало обратно автоматически
+        # (вернуться можно по ссылке-приглашению, заняв то же место со всеми тратами)
+        ex(conn, "UPDATE members SET user_id=NULL, claim_username=NULL WHERE id=?", (mm["id"],))
         return self._json({"ok": True, "left": True})
 
     def _delete_group(self, conn, me, gid):
@@ -784,8 +838,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         payer = d.get("payer")
         if amount <= 0 or not payer:
             return self._err("Нужны сумма и плательщик.")
-        if not ex(conn, "SELECT 1 FROM members WHERE id=? AND group_id=?", (payer, gid)).fetchone():
-            return self._err("Плательщик не из этой группы.")
+        verr = validate_split(conn, gid, payer, amount, d.get("split"))
+        if verr:
+            return self._err(verr)
         ex(conn, "INSERT INTO expenses(id,group_id,payer,amount,title,category,date,split,author_member,created) "
            "VALUES(?,?,?,?,?,?,?,?,?,?)",
            (uid("e"), gid, payer, amount, d.get("title") or "", d.get("category") or "other",
@@ -822,6 +877,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 amount = 0
             if amount <= 0 or not d.get("payer"):
                 return self._err("Нужны сумма и плательщик.")
+            verr = validate_split(conn, e["group_id"], d.get("payer"), amount, d.get("split"))
+            if verr:
+                return self._err(verr)
             ex(conn, "UPDATE expenses SET payer=?,amount=?,title=?,category=?,date=?,split=? WHERE id=?",
                (d.get("payer"), amount, d.get("title") or "", d.get("category") or "other",
                 d.get("date") or time.strftime("%Y-%m-%d"),
@@ -863,6 +921,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         to_mem = ex(conn, "SELECT * FROM members WHERE id=?", (p["to_member"],)).fetchone()
         if not to_mem or to_mem["user_id"] != me["id"]:
             return self._err("Подтвердить может только получатель.", 403)
+        if p["status"] != "pending":
+            return self._err("Этот перевод уже обработан.", 409)
         from_mem = ex(conn, "SELECT * FROM members WHERE id=?", (p["from_member"],)).fetchone()
         new = "confirmed" if action == "confirm" else "disputed"
         ex(conn, "UPDATE payments SET status=? WHERE id=?", (new, pid))
