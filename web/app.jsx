@@ -22,6 +22,7 @@ function confirmDialog(message) {
 
 // ───────────────────────── API ─────────────────────────
 const TOKEN_KEY = "kkd-token";
+const LAST_GROUP_KEY = "kkd-last-group";
 const tok = {
   get: () => localStorage.getItem(TOKEN_KEY),
   set: (t) => { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); },
@@ -816,13 +817,16 @@ function GroupView({ initial, dark, setDark, onBack }) {
     if (d.me) setMeUser(d.me);
   };
 
+  const busyUI = sheetOpen || payTo || notifOpen || settings || !!renameTarget || !!editing || !!openExp;
+  const refresh = async () => { if (busyUI) return; try { applyState(await api("/groups/" + gid)); } catch (e) {} };
   useEffect(() => {
-    const iv = setInterval(async () => {
-      if (sheetOpen || payTo || notifOpen || settings || document.hidden) return;
-      try { applyState(await api("/groups/" + gid)); } catch (e) {}
-    }, 8000);
-    return () => clearInterval(iv);
-  }, [sheetOpen, payTo, notifOpen, settings]);
+    const iv = setInterval(() => { if (!document.hidden) refresh(); }, 8000);
+    // мгновенное обновление при возврате в приложение / открытии вкладки
+    const onShow = () => { if (!document.hidden) refresh(); };
+    window.addEventListener("focus", onShow);
+    document.addEventListener("visibilitychange", onShow);
+    return () => { clearInterval(iv); window.removeEventListener("focus", onShow); document.removeEventListener("visibilitychange", onShow); };
+  }, [busyUI]);
 
   const confirmMode = groupMeta.paymentMode === "confirm";
   const activePayments = useMemo(() => payments.filter((p) => confirmMode ? p.status === "confirmed" : p.status !== "disputed"), [payments, confirmMode]);
@@ -1306,6 +1310,24 @@ function Root() {
     setMe(d.user); setGroups(d.groups);
     return d;
   }
+  // показать группу и запомнить её, чтобы при перезагрузке вернуться в неё же
+  function showGroup(state) {
+    setGroup(state);
+    try {
+      if (state && state.group) localStorage.setItem(LAST_GROUP_KEY, String(state.group.id));
+      else localStorage.removeItem(LAST_GROUP_KEY);
+    } catch (e) {}
+  }
+  async function restoreLast(d) {
+    try {
+      const last = localStorage.getItem(LAST_GROUP_KEY);
+      if (last && d.groups.some((g) => String(g.id) === String(last))) {
+        showGroup(await api("/groups/" + last));
+      } else if (last) {
+        localStorage.removeItem(LAST_GROUP_KEY);
+      }
+    } catch (e) {}
+  }
   function joinCode() {
     const q = new URLSearchParams(location.search).get("join");
     const sp = inTelegram && TG.initDataUnsafe ? TG.initDataUnsafe.start_param : null;
@@ -1313,12 +1335,15 @@ function Root() {
   }
   async function handleJoin() {
     const code = joinCode();
-    if (!code) return;
+    if (!code) return false;
+    let opened = false;
     try {
       const d = await api("/groups/join", { method: "POST", body: { code } });
-      if (d && d.needsClaim) setClaim(d); else setGroup(d);
+      if (d && d.needsClaim) { setClaim(d); opened = true; }
+      else { showGroup(d); opened = true; }
     } catch (e) {}
     history.replaceState({}, "", location.pathname);
+    return opened;
   }
   useEffect(() => {
     (async () => {
@@ -1330,19 +1355,19 @@ function Root() {
         } catch (e) {}
         try {
           const d = await api("/auth/telegram", { method: "POST", body: { initData: TG.initData } });
-          tok.set(d.token); await loadGroups(); await handleJoin();
+          tok.set(d.token); const gd = await loadGroups(); if (!(await handleJoin())) await restoreLast(gd);
         } catch (e) { setAuthErr(String((e && e.message) || e)); }
       } else if (tok.get()) {
-        try { await loadGroups(); await handleJoin(); } catch (e) { tok.set(null); }
+        try { const gd = await loadGroups(); if (!(await handleJoin())) await restoreLast(gd); } catch (e) { tok.set(null); }
       }
       setReady(true);
     })();
   }, []);
 
-  async function openGroup(gid) { setGroup(await api("/groups/" + gid)); }
-  async function afterAuth() { await loadGroups(); await handleJoin(); }
-  function logout() { api("/auth/logout", { method: "POST" }).catch(() => {}); tok.set(null); setMe(null); setGroups([]); setGroup(null); }
-  async function backToGroups() { setGroup(null); await loadGroups(); }
+  async function openGroup(gid) { showGroup(await api("/groups/" + gid)); }
+  async function afterAuth() { const gd = await loadGroups(); if (!(await handleJoin())) await restoreLast(gd); }
+  function logout() { api("/auth/logout", { method: "POST" }).catch(() => {}); tok.set(null); setMe(null); setGroups([]); showGroup(null); }
+  async function backToGroups() { showGroup(null); await loadGroups(); }
 
   if (!ready) return <div className="boot">Загрузка…</div>;
   if (!me) {
@@ -1355,9 +1380,9 @@ function Root() {
     return <AuthScreen onAuthed={afterAuth} dark={dark} setDark={setDark} />;
   }
   if (claim) return <ClaimScreen claim={claim} dark={dark} setDark={setDark}
-    onDone={(state) => { setClaim(null); setGroup(state); }} onBack={() => setClaim(null)} />;
+    onDone={(state) => { setClaim(null); showGroup(state); }} onBack={() => setClaim(null)} />;
   if (!group) return <GroupsScreen me={me} groups={groups} dark={dark} setDark={setDark}
-    onOpen={openGroup} onCreated={(d) => (d && d.needsClaim ? setClaim(d) : setGroup(d))} onLogout={logout} reload={loadGroups} />;
+    onOpen={openGroup} onCreated={(d) => (d && d.needsClaim ? setClaim(d) : showGroup(d))} onLogout={logout} reload={loadGroups} />;
   return <GroupView key={group.group.id} initial={group} dark={dark} setDark={setDark} onBack={backToGroups} />;
 }
 

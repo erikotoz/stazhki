@@ -526,7 +526,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v4-help"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v5-stay"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
