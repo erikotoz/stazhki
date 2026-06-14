@@ -141,6 +141,23 @@ def add_missing_columns(conn):
                 print("  alter groups.%s: %s" % (name, e))
 
 
+def enable_rls(conn):
+    # Включаем Row Level Security на всех таблицах в схеме public.
+    # Зачем: Supabase отдаёт схему public наружу через свой REST API (PostgREST,
+    # ключ anon). Без RLS любой, у кого есть anon-ключ проекта, мог бы читать/менять
+    # данные напрямую, минуя наш сервер. С включённым RLS и без политик роли anon/
+    # authenticated не видят ни одной строки → REST API закрыт.
+    # Наш backend это НЕ ломает: он ходит в БД тем же ролём, что создал таблицы
+    # (владелец), а владелец таблицы обходит RLS.
+    if not USE_PG:
+        return
+    for t in LEGACY_TABLES:  # все 7 таблиц приложения
+        try:
+            ex(conn, "ALTER TABLE public.%s ENABLE ROW LEVEL SECURITY" % t)
+        except Exception as e:
+            print("  rls %s: %s" % (t, e))
+
+
 def init_db():
     conn = get_conn()
     try:
@@ -148,6 +165,7 @@ def init_db():
         for s in SCHEMA:
             ex(conn, s)
         add_missing_columns(conn)
+        enable_rls(conn)
     finally:
         release(conn)
 
@@ -526,7 +544,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # ---- открытые маршруты (без сессии) ----
             if method == "GET" and path == "/api/config":
                 return self._json({"telegram": bool(BOT_TOKEN), "devLogin": DEV_LOGIN,
-                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v5-stay"})
+                                   "bot": BOT_USERNAME, "app": BOT_APP, "ver": "v6-rls"})
             if method == "GET" and path == "/api/health":
                 return self._json({"ok": True})
 
