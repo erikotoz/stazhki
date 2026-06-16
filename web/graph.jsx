@@ -69,14 +69,15 @@ function SettlementGraph({ participants, balances, paid, transfers, names, hubId
   const rad = {};
   participants.forEach((p) => (rad[p.id] = nodeRadius(paid[p.id] || 0, maxPaid)));
 
+  const EPS = window.Settle.EPS;
   function balColor(id) {
     const b = balances[id] || 0;
-    if (Math.abs(b) < 50) return "var(--neutral-node)";
+    if (Math.abs(b) <= EPS) return "var(--neutral-node)";
     return b > 0 ? "var(--pos)" : "var(--neg)";
   }
   function balRing(id) {
     const b = balances[id] || 0;
-    if (Math.abs(b) < 50) return "var(--neutral-node-ring)";
+    if (Math.abs(b) <= EPS) return "var(--neutral-node-ring)";
     return b > 0 ? "var(--pos-ring)" : "var(--neg-ring)";
   }
 

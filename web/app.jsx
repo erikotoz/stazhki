@@ -791,6 +791,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
   const [payInfo, setPayInfo] = useState(initial.payInfo || {});
   const [meUser, setMeUser] = useState(initial.me);
   const [mode, setMode] = useState("min");
+  const [spendOpen, setSpendOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -842,6 +843,18 @@ function GroupView({ initial, dark, setDark, onBack }) {
     () => (mode === "min" ? S.minimalTransfers(balances) : S.pairwiseTransfers(members, expenses, activePayments)),
     [mode, balances, members, expenses, activePayments]);
   const totalSpent = useMemo(() => expenses.reduce((a, e) => a + Math.round(e.amount * 100), 0), [expenses]);
+  // Сколько «съел» каждый участник — сумма его долей по всем тратам (в копейках).
+  // В сумме даёт «Потрачено вместе».
+  const consumption = useMemo(() => {
+    const ids = members.map((m) => m.id);
+    const tot = Object.fromEntries(ids.map((i) => [i, 0]));
+    expenses.forEach((e) => {
+      const owed = S.owedForExpense(e, ids);
+      Object.entries(owed).forEach(([id, k]) => { if (tot[id] !== undefined) tot[id] += k; });
+    });
+    return ids.map((i) => ({ id: i, name: names[i] || "?", total: tot[i] }))
+      .filter((x) => x.total > 0).sort((a, b) => b.total - a.total);
+  }, [members, expenses, names]);
   const allSettled = transfers.length === 0 && expenses.length > 0;
   // Личный список следует режиму «минимум / по парам» (общий с «Кто кому скидывает»).
   // По парам — с разбивкой «за что»; минимум — кому реально перевести (без «за что»).
@@ -921,13 +934,13 @@ function GroupView({ initial, dark, setDark, onBack }) {
   async function leaveGroup() {
     const myBal = balances[meMid] || 0;
     let msg = "Выйти из группы «" + groupMeta.name + "»?";
-    if (myBal > 50) msg += " Вам ещё должны " + S.fmt(myBal) + " — после выхода вы перестанете это видеть.";
-    else if (myBal < -50) msg += " Вы ещё должны " + S.fmt(-myBal) + " — долг останется за вами.";
+    if (myBal > S.EPS) msg += " Вам ещё должны " + S.fmt(myBal) + " — после выхода вы перестанете это видеть.";
+    else if (myBal < -S.EPS) msg += " Вы ещё должны " + S.fmt(-myBal) + " — долг останется за вами.";
     if (!(await confirmDialog(msg))) return;
     try { await api("/groups/" + gid + "/leave", { method: "POST" }); onBack(); } catch (ex) { alert(ex.message); }
   }
   async function deleteGroup() {
-    const outstanding = Object.values(balances).some((v) => Math.abs(v) >= 50);
+    const outstanding = Object.values(balances).some((v) => Math.abs(v) > S.EPS);
     let msg = "Удалить группу «" + groupMeta.name + "» со всеми тратами? Отменить нельзя.";
     if (outstanding) msg += " Внимание: не все ещё рассчитались — есть непогашенные долги.";
     if (!(await confirmDialog(msg))) return;
@@ -966,7 +979,7 @@ function GroupView({ initial, dark, setDark, onBack }) {
 
   const PartCard = ({ m }) => {
     const b = balances[m.id] || 0;
-    const pos = b > 50, neg = b < -50;
+    const pos = b > S.EPS, neg = b < -S.EPS;
     return (
       <div className={"pcard" + (m.claimed ? "" : " ghost")}>
         <div className="av" style={{ background: m.color }}>{(m.name || "?")[0]}</div>
@@ -1046,8 +1059,8 @@ function GroupView({ initial, dark, setDark, onBack }) {
         </button>
       </div>
       <div className="seg" style={{ display: "flex", width: "100%", marginBottom: 14 }}>
-        <button className={mode === "pairs" ? "on" : ""} onClick={() => setMode("pairs")}>По парам</button>
         <button className={mode === "min" ? "on" : ""} onClick={() => setMode("min")}>Минимум переводов</button>
+        <button className={mode === "pairs" ? "on" : ""} onClick={() => setMode("pairs")}>По парам</button>
       </div>
       {allSettled ? (
         <div className="empty settled"><div className="empty-emoji">🎉</div>
@@ -1156,9 +1169,27 @@ function GroupView({ initial, dark, setDark, onBack }) {
             entries={breakdown.iOwe} colorOf={colorOf} emptyText="Вы никому не должны" onPay={openPay} payInfo={payInfo} />
         </div>
         <div className="summary-sub" style={{ marginTop: 14 }}>
-          <span className="chip">Потрачено вместе&nbsp;<span className="num">{S.fmtShort(totalSpent)}</span></span>
+          <button className={"chip chip-btn" + (spendOpen ? " on" : "")} onClick={() => setSpendOpen((o) => !o)}
+            disabled={consumption.length === 0}>
+            Потрачено вместе&nbsp;<span className="num">{S.fmtShort(totalSpent)}</span>
+            {consumption.length > 0 && <span className={"chip-chev" + (spendOpen ? " open" : "")}><Ic.arrow /></span>}
+          </button>
           <span className="chip">{members.length} {pluralPeople(members.length)}</span>
         </div>
+        {spendOpen && consumption.length > 0 && (
+          <div className="spend-list">
+            <div className="spend-cap">Сколько потратил каждый — сумма его долей по всем тратам</div>
+            {consumption.map((c) => (
+              <div className="spend-row" key={c.id}>
+                <div className="av" style={{ background: colorOf(c.id), width: 28, height: 28, fontSize: 12 }}>{c.name[0]}</div>
+                <span className="spend-name">{c.name}</span>
+                <div className="spend-bar"><div className="spend-fill"
+                  style={{ width: (totalSpent > 0 ? Math.round((c.total / totalSpent) * 100) : 0) + "%", background: colorOf(c.id) }} /></div>
+                <span className="spend-amt num">{S.fmtShort(c.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {hasExpenses ? (

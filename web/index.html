@@ -114,6 +114,19 @@ input,select{font-family:inherit;color:inherit}
 .chip .dot{width:7px;height:7px;border-radius:99px}
 .chip.pos{color:var(--pos)}.chip.pos .dot{background:var(--pos)}
 .chip.neg{color:var(--neg)}.chip.neg .dot{background:var(--neg)}
+.chip-btn{cursor:pointer;color:var(--text);font-family:inherit;transition:.15s}
+.chip-btn:hover:not(:disabled),.chip-btn.on{background:var(--surface-3)}
+.chip-btn:disabled{cursor:default;opacity:.7}
+.chip-chev{display:grid;place-items:center;font-size:13px;color:var(--text-3);transition:transform .18s;transform:rotate(90deg)}
+.chip-chev.open{transform:rotate(-90deg)}
+.spend-list{margin-top:12px;padding:12px 13px;border-radius:calc(var(--r) - 4px);background:var(--surface-2);border:.5px solid var(--line);
+  display:flex;flex-direction:column;gap:10px}
+.spend-cap{font-size:12px;color:var(--text-3);margin-bottom:2px}
+.spend-row{display:flex;align-items:center;gap:10px}
+.spend-name{font-size:13.5px;font-weight:600;color:var(--text);flex:0 0 auto;min-width:64px}
+.spend-bar{flex:1;height:7px;border-radius:99px;background:var(--surface-3);overflow:hidden;min-width:30px}
+.spend-fill{height:100%;border-radius:99px;opacity:.85}
+.spend-amt{flex:0 0 auto;font-size:13px;font-weight:700;color:var(--text);min-width:62px;text-align:right}
 
 /* Graph */
 .graph-wrap{position:relative;width:100%;max-width:420px;margin:0 auto;aspect-ratio:1}

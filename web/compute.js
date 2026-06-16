@@ -61,8 +61,9 @@
     return paid;
   }
 
-  // Порог «в расчёте» (копейки) — мелкие остатки округления не считаем долгом
-  var EPS = 50;
+  // Порог «в расчёте» (копейки) — суммы меньше 1 ₽ не считаем долгом.
+  // Так копеечный «хвост» от округления перевода не висит вечным долгом.
+  var EPS = 99;
 
   // Greedy minimal transfers from balances (kopecks)
   function minimalTransfers(balances) {
@@ -104,9 +105,9 @@
       const key = p.from + ">" + p.to;
       debt[key] = (debt[key] || 0) - Math.round(p.amount * 100);
     });
-    // net reciprocal
+    // net reciprocal (схлопываем встречные долги в паре A↔B)
     const seen = new Set();
-    const transfers = [];
+    let transfers = [];
     Object.keys(debt).forEach((key) => {
       if (seen.has(key)) return;
       const [a, b] = key.split(">");
@@ -116,7 +117,52 @@
       if (net > EPS) transfers.push({ from: a, to: b, amount: net });
       else if (net < -EPS) transfers.push({ from: b, to: a, amount: -net });
     });
+    // Схлопываем циклы из 3+ участников (например А→Б→В→А по 150 — это «ничего»).
+    // Взаимозачёт пар выше убирает только встречные долги (2 участника),
+    // но не кольца длиннее. Вычитание минимального ребра кольца не меняет
+    // ничей итоговый баланс — просто убирает бессмысленные переводы по кругу.
+    transfers = cancelCycles(transfers);
     return transfers.sort((x, y) => y.amount - x.amount);
+  }
+
+  // Убрать направленные циклы из набора долгов, сохранив итоговые балансы.
+  function cancelCycles(edges) {
+    const amt = {}; // "from>to" -> копейки
+    edges.forEach((e) => { const k = e.from + ">" + e.to; amt[k] = (amt[k] || 0) + e.amount; });
+    function findCycle() {
+      const adj = {};
+      Object.keys(amt).forEach((k) => {
+        if (amt[k] > 0) { const p = k.split(">"); (adj[p[0]] = adj[p[0]] || []).push(p[1]); }
+      });
+      const color = {}; // 1 = в текущем пути, 2 = пройдено
+      const stack = [];
+      let cyc = null;
+      function dfs(u) {
+        color[u] = 1; stack.push(u);
+        const nbrs = adj[u] || [];
+        for (let i = 0; i < nbrs.length && !cyc; i++) {
+          const v = nbrs[i];
+          if (color[v] === 1) { cyc = stack.slice(stack.indexOf(v)); return; }
+          if (!color[v]) dfs(v);
+        }
+        if (!cyc) { stack.pop(); color[u] = 2; }
+      }
+      const nodes = Object.keys(adj);
+      for (let i = 0; i < nodes.length && !cyc; i++) if (!color[nodes[i]]) dfs(nodes[i]);
+      return cyc;
+    }
+    let guard = 0;
+    while (guard++ < 1000) {
+      const cyc = findCycle();
+      if (!cyc) break;
+      const keys = cyc.map((n, i) => n + ">" + cyc[(i + 1) % cyc.length]);
+      const m = Math.min.apply(null, keys.map((k) => amt[k] || 0));
+      keys.forEach((k) => { amt[k] -= m; });
+    }
+    return Object.keys(amt).filter((k) => amt[k] > EPS).map((k) => {
+      const p = k.split(">");
+      return { from: p[0], to: p[1], amount: amt[k] };
+    });
   }
 
   // Format kopecks -> "1 200 ₽" (thin space thousands, no kopecks if whole)
@@ -152,6 +198,6 @@
 
   window.Settle = {
     owedForExpense, computeBalances, totalPaid,
-    minimalTransfers, pairwiseTransfers, fmt, fmtShort,
+    minimalTransfers, pairwiseTransfers, fmt, fmtShort, EPS,
   };
 })();
